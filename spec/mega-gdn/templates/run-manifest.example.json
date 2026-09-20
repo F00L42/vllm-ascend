@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "is_template": true,
+  "round_id": null,
+  "run_id": null,
+  "hypothesis": null,
+  "status": "pending_remote",
+  "source": {
+    "candidate_tag": null,
+    "vllm_ascend_sha": null,
+    "upstream_base_sha": null,
+    "vllm_sha": null,
+    "xllm_sha": null,
+    "xllm_ops_sha": null,
+    "pto_sha": null,
+    "catlass_sha": null,
+    "gitlink_match": null,
+    "dirty_by_repository": {},
+    "nested_dependencies": [],
+    "dependency_patches": []
+  },
+  "environment": {
+    "image_digest": null,
+    "os": null,
+    "architecture": null,
+    "soc": null,
+    "device_count": null,
+    "driver": null,
+    "firmware": null,
+    "cann": null,
+    "compiler": null,
+    "python": null,
+    "torch": null,
+    "torch_npu": null,
+    "triton_ascend": null
+  },
+  "build": {
+    "commands": [],
+    "exit_codes": [],
+    "log_files": [],
+    "compile_options": {},
+    "artifacts": []
+  },
+  "load": {
+    "python_executable": null,
+    "package_paths": {},
+    "extension_paths": [],
+    "opp_paths": [],
+    "artifact_sha256": {},
+    "real_operator_smoke_passed": null
+  },
+  "workload": {
+    "model_id": null,
+    "model_revision": null,
+    "model_config_sha256": null,
+    "request_set_sha256": null,
+    "seed": null,
+    "dtype": null,
+    "tp": null,
+    "speculative_tokens": null,
+    "batch_mode": null,
+    "runner": null,
+    "execution_mode": null,
+    "async_scheduling": null,
+    "prefix_cache_mode": null,
+    "runtime_env_allowlist": {}
+  },
+  "telemetry": {
+    "mode": null,
+    "performance_result_valid": null,
+    "capture_scope": null
+  },
+  "validation": {
+    "commands": [],
+    "exit_codes": [],
+    "passed": null,
+    "failed": null,
+    "skipped": null,
+    "candidate_hit_count": null,
+    "fallback_reasons": {},
+    "validated_scope": [],
+    "result_artifacts": []
+  }
+}

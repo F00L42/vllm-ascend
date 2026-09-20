@@ -1,0 +1,4 @@
+# Preserve archived bytes and IMPORT_MANIFEST hashes across Windows/Linux.
+* -text
+# Archived Markdown uses two trailing spaces for hard line breaks.
+*.md whitespace=-blank-at-eol

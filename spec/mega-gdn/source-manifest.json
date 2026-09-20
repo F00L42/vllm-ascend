@@ -1,0 +1,47 @@
+{
+  "recorded_date": "2026-09-20",
+  "branch": "codex/mega-gdn-910b",
+  "parent_base_before_rebase": "aff1b74b66467a7805cde69ef0728b7e32c0f990",
+  "upstream_base": "8bd6fe0bc519e2beb9930687ac3e89f2245aa70d",
+  "implementation_revision": "Record git rev-parse HEAD from the clean candidate checkout in each remote run.",
+  "dependencies": {
+    "refs/vllm": {
+      "commit": "84030bbe3d74d99bad477a3d2e37a973ccd8865c",
+      "tracked_status": ""
+    },
+    "refs/xllm": {
+      "commit": "cf4c7732d52da3a39cb35b0125a6b08cf2229c69",
+      "tracked_status": ""
+    },
+    "refs/xllm-ops": {
+      "commit": "fee381637f072a4b3a3d3e320aad327b17e27738",
+      "tracked_status": ""
+    },
+    "csrc/third_party/pto-isa": {
+      "commit": "781ac0eb2e4d31e0bc2ab953bca9f9036bec7528",
+      "tracked_status": ""
+    }
+  },
+  "catlass_gitlink": "41bf90da655bba3c66d0acd7e00abe33960ecfd6",
+  "local_pto_checkout": "sparse include/ only: upstream docs contain Windows case collisions",
+  "source_blob_sha256": {
+    "xllm_ops/mega_gdn_mtp_decode/CMakeLists.txt": "c01009a4a4acd24c76fec888fd365a5098538216c7197869c0fd4ba0bb2ba3bf",
+    "xllm_ops/mega_gdn_mtp_decode/op_host/CMakeLists.txt": "76c499ff82a0ca95c130bba7c801a6592b80259f52988cc3c39062899afe2e42",
+    "xllm_ops/mega_gdn_mtp_decode/op_host/mega_gdn_mtp_decode_def.cpp": "7d0d34ab938ca6d4263c4d89048432b4d2dd01055e4e1493c760e480342de155",
+    "xllm_ops/mega_gdn_mtp_decode/op_host/mega_gdn_mtp_decode_proto.cpp": "c43893bb34d1cfdeb8fb815fdd252f447ed9166337457a27ebdee8aea4b29ec4",
+    "xllm_ops/mega_gdn_mtp_decode/op_host/mega_gdn_mtp_decode_tiling.cpp": "1241e5997007d263f4e89a3e89b2fc3455322b798ccf5d264d2ad12068e3498b",
+    "xllm_ops/mega_gdn_mtp_decode/op_host/mega_gdn_mtp_decode_tiling.h": "214c5f4440ee028a78221bbaa73ec7049ddc66556a9022d0ca352a45d7511b66",
+    "xllm_ops/mega_gdn_mtp_decode/op_kernel/mega_gdn_mtp_decode.cpp": "f8e228ed8d8ead74944529bcafa52776bdfca84ca7d9d94377ff186d23dad5e5",
+    "xllm_ops/mega_gdn_mtp_decode/op_kernel/mega_gdn_mtp_decode_pto_kernel.h": "ec9311b376155cf1e69ef3c3489f156de1376e72927e4e8bd8101eae82b54890",
+    "xllm_ops/mega_gdn_decode/op_kernel/mega_gdn_decode_pto_kernel.h": "24075c9d68363669d0fb620f13ddac8252c70841ed0bdb84840d63d77018969d",
+    "test/python_test/test_mega_gdn_mtp_decode.py": "a1ce007a825c7e6960f3b8c521a9b71b53ffec2b56e1be434501ea9a340aabfd",
+    "LICENSE": "cf7818526fdcf154991d5b2bada5d864c794c13595982453016eaa4a44feac91"
+  },
+  "status": {
+    "cpu": "29 tests passed before final formatting",
+    "npu_build": "pending_remote",
+    "npu_numerics": "pending_remote",
+    "native_model_capture": "pending_remote",
+    "model_routing": "not_implemented"
+  }
+}

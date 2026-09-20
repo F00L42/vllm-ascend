@@ -1,0 +1,63 @@
+{
+  "conversation_id": "6aace1e2-da84-83ed-a2ad-e7fe157a2e6f",
+  "conversation_title": "生成迁移文档",
+  "captured_date": "2026-09-18",
+  "acquisition": "rendered_document_preview",
+  "original_bytes_verified": false,
+  "documents": [
+    {
+      "file": "00_README.md",
+      "preview_file": "_preview/00_README.preview.html",
+      "markdown_sha256": "9b78ac496ba5a091815a123b6addc674ca5cd31b323e4e6d56cd666a5c7ed190",
+      "preview_sha256": "b2979ccc9b12dadeca5d1114145322bc4d91038cf8de9df1416965a88531b938",
+      "text_roundtrip_verified": true,
+      "links_roundtrip_verified": true,
+      "links": 5
+    },
+    {
+      "file": "01_开发计划.md",
+      "preview_file": "_preview/01_开发计划.preview.html",
+      "markdown_sha256": "3c43805f66e5c44871b67f4a7010d8bdf26857d6cf64cf9376762626e8e5a3e0",
+      "preview_sha256": "62bf6abd679c0c7792e07f489149faeee330a05e085b7a2be08f22f328423ccf",
+      "text_roundtrip_verified": true,
+      "links_roundtrip_verified": true,
+      "links": 2
+    },
+    {
+      "file": "02_状态与数值契约.md",
+      "preview_file": "_preview/02_状态与数值契约.preview.html",
+      "markdown_sha256": "c9df0778d7b5fcae288e45b2ccedb673014b92b50e39ef5416efb559aa0532a8",
+      "preview_sha256": "e77749fd8ec6961be4ee1f3852fb86f02e29327cbc565ad4ab2a83a186f66019",
+      "text_roundtrip_verified": true,
+      "links_roundtrip_verified": true,
+      "links": 2
+    },
+    {
+      "file": "03_构建接入与源码导航.md",
+      "preview_file": "_preview/03_构建接入与源码导航.preview.html",
+      "markdown_sha256": "63d2bb4d29bb42d33058dc791cfbdb0e120a7e8db3e93c33423980097a778e26",
+      "preview_sha256": "eca11cfd0795572787ada08d2bf841efadb94f844fa854c6ace742347cfddc16",
+      "text_roundtrip_verified": true,
+      "links_roundtrip_verified": true,
+      "links": 12
+    },
+    {
+      "file": "04_服务器验证与Telemetry.md",
+      "preview_file": "_preview/04_服务器验证与Telemetry.preview.html",
+      "markdown_sha256": "cddc433623d24599716e8ba72c9929d5e2bd93c8fa76c961b8c4b3077f949dfb",
+      "preview_sha256": "67d7b6dc4389d15a4ece644136eb0c03418f615750e660708027d91ffb7ddbe6",
+      "text_roundtrip_verified": true,
+      "links_roundtrip_verified": true,
+      "links": 0
+    },
+    {
+      "file": "05_本地Codex执行手册.md",
+      "preview_file": "_preview/05_本地Codex执行手册.preview.html",
+      "markdown_sha256": "9b4b1ce7bd3b1faacba8ad2176b7368fca3a619248af8ce430260368a3b5fc1b",
+      "preview_sha256": "f3a143b4abe0b52a36c04324818602c9a38b241fbb7dbb0dff215a42aa7e5332",
+      "text_roundtrip_verified": true,
+      "links_roundtrip_verified": true,
+      "links": 0
+    }
+  ]
+}
