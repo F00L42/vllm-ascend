@@ -3,3 +3,18 @@
 	url = https://gitcode.com/cann/catlass.git
 	branch = master
 	commit = 41bf90da655bba3c66d0acd7e00abe33960ecfd6
+[submodule "refs/xllm-ops"]
+	path = refs/xllm-ops
+	url = https://github.com/xLLM-AI/xllm-ops.git
+	branch = main
+[submodule "refs/vllm"]
+	path = refs/vllm
+	url = https://github.com/vllm-project/vllm.git
+	branch = main
+[submodule "refs/xllm"]
+	path = refs/xllm
+	url = https://github.com/xLLM-AI/xllm.git
+	branch = main
+[submodule "csrc/third_party/pto-isa"]
+	path = csrc/third_party/pto-isa
+	url = https://gitcode.com/cann/pto-isa.git

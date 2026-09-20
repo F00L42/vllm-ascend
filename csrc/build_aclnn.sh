@@ -17,8 +17,8 @@ setup_catlass_dependency() {
     catlass_commit=$(git config -f "${ROOT_DIR}/.gitmodules" --get submodule.csrc/third_party/catlass.commit)
     if [[ ! -d "${catlass_path}" ]]; then
         echo "dependency catlass is missing, try to fetch it..."
-        git submodule sync
-        if ! git submodule update --init --recursive; then
+        git -C "${ROOT_DIR}" submodule sync -- csrc/third_party/catlass
+        if ! git -C "${ROOT_DIR}" submodule update --init --recursive -- csrc/third_party/catlass; then
             log "fetch failed"
             exit 1
         fi
@@ -30,6 +30,17 @@ setup_catlass_dependency() {
     absolute_catlass_path=$(cd "${catlass_path}" && pwd)
     export CPATH="${absolute_catlass_path}${CPATH:+:${CPATH}}"
     log "catlass include=${absolute_catlass_path}"
+}
+
+setup_mega_pto_dependency() {
+    local pto_path="${ROOT_DIR}/csrc/third_party/pto-isa"
+    if [[ ! -f "${pto_path}/include/pto/pto-inst.hpp" ]]; then
+        log "fetching pinned MEGA PTO dependency"
+        if ! git -C "${ROOT_DIR}" submodule update --init -- csrc/third_party/pto-isa; then
+            log "PTO fetch failed; initialize csrc/third_party/pto-isa before building"
+            exit 1
+        fi
+    fi
 }
 
 resolve_op_dir() {
@@ -94,6 +105,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
     # ASCEND910B (A2) series
     # dependency: catlass
     setup_catlass_dependency
+    setup_mega_pto_dependency
 
     CUSTOM_OPS_ARRAY=(
         "scatter_nd_update_sk"
@@ -128,6 +140,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
         "grouped_matmul_swiglu_quant"
         "grouped_matmul_swiglu_quant_v2"
         "recurrent_gated_delta_rule"
+        "ascend_mega_gdn_mtp_decode"
         "recurrent_kda"
         "chunk_fwd_o"
         "chunk_gated_delta_rule_fwd_h"

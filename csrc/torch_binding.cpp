@@ -48,6 +48,7 @@
 #include "attention/lightning_indexer_quant/lightning_indexer_quant_torch_adpt.h"
 #include "moe/causal_conv1d_v310/causal_conv1d_310_torch_adpt.h"
 #include "attention/recurrent_gated_delta_rule/recurrent_gated_delta_rule_torch_adpt.h"
+#include "attention/ascend_mega_gdn_mtp_decode/ascend_mega_gdn_mtp_decode_torch_adpt.h"
 #include "attention/recurrent_kda/recurrent_kda_torch_adpt.h"
 #include "attention/chunk_kda_fwd/chunk_kda_fwd_torch_adpt.h"
 #include "attention/kda_gate_cumsum/kda_gate_cumsum_torch_adpt.h"
@@ -2920,6 +2921,14 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
         "                               Tensor? g=None, "
         "                               Tensor? gk=None) -> Tensor");
     ops.impl("npu_recurrent_gated_delta_rule", torch::kPrivateUse1, &vllm_ascend::npu_recurrent_gated_delta_rule);
+
+    // P1 standalone slot ABI. Both state pools are mutated; outputs are fresh.
+    ops.def("npu_mega_gdn_mtp_decode(Tensor qkv, Tensor z, Tensor b, Tensor a, "
+            "Tensor conv_weight, Tensor(a!) conv_state, Tensor a_log, Tensor dt_bias, "
+            "Tensor(b!) ssm_state, Tensor read_state_indices, Tensor write_state_indices, "
+            "Tensor num_accepted_tokens, Tensor norm_weight, "
+            "bool fla_ssm_state_layout=False) -> (Tensor conv_out, Tensor out)");
+    ops.impl("npu_mega_gdn_mtp_decode", torch::kPrivateUse1, &vllm_ascend::npu_mega_gdn_mtp_decode);
 
     ops.def(
         "recurrent_kda(Tensor query, Tensor key, Tensor value, Tensor gate, Tensor beta, "

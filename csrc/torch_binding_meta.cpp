@@ -744,6 +744,20 @@ at::Tensor npu_recurrent_gated_delta_rule_310_meta(
     return output;
 }
 
+std::tuple<at::Tensor, at::Tensor> npu_mega_gdn_mtp_decode_meta(
+    const at::Tensor& qkv, const at::Tensor& z,
+    const at::Tensor& b, const at::Tensor& a,
+    const at::Tensor& conv_weight, at::Tensor& conv_state,
+    const at::Tensor& a_log, const at::Tensor& dt_bias,
+    at::Tensor& ssm_state, const at::Tensor& read_state_indices,
+    const at::Tensor& write_state_indices,
+    const at::Tensor& num_accepted_tokens, const at::Tensor& norm_weight,
+    bool fla_ssm_state_layout)
+{
+    return {at::empty_symint(qkv.sym_sizes(), qkv.options()),
+            at::empty_symint(z.sym_sizes(), z.options())};
+}
+
 at::Tensor npu_recurrent_gated_delta_rule_meta(
     const at::Tensor& query,
     const at::Tensor& key,
@@ -2165,6 +2179,7 @@ TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     ops.impl("npu_gemma_rms_norm", &vllm_ascend::meta::npu_gemma_rms_norm_meta);
     // recurrent_gated_delta_rule meta implementation
     ops.impl("npu_recurrent_gated_delta_rule", &vllm_ascend::meta::npu_recurrent_gated_delta_rule_meta);
+    ops.impl("npu_mega_gdn_mtp_decode", &vllm_ascend::meta::npu_mega_gdn_mtp_decode_meta);
     ops.impl("recurrent_kda", &vllm_ascend::meta::recurrent_kda_meta);
     ops.impl("dequant_situ_quant", &vllm_ascend::meta::dequant_situ_quant_meta);
     ops.impl("situ_mx_quant", &vllm_ascend::meta::situ_mx_quant_meta);
