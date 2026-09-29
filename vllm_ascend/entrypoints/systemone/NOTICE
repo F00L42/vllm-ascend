@@ -1,0 +1,31 @@
+The Plumb SystemOne protocol adapts runtime.py and server.py from JevK5,
+revision 85238d7be5527370c43206fe54cd752eb3134c1b, under Apache License 2.0.
+Copyright 2026 the JevK5 authors (github.com/allebee,
+huggingface.co/alibiserikbay). See the repository LICENSE for Apache 2.0.
+
+Changes implement typed request validation, native vLLM request planning,
+concurrent serving, and calibrated readout from candidate token logprobs.
+This package does not distribute JevK5/Plumb model weights or training data.
+
+The decision prompt and one-pass letter readout originate from SemIf by
+TheoLeeCJ (https://github.com/TheoLeeCJ/SemIf), under the MIT License:
+
+Copyright (c) TheoLeeCJ
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

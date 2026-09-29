@@ -509,6 +509,7 @@ setup(
     packages=find_packages(exclude=("docs", "examples", "tests*", "csrc")),
     package_data={
         "vllm_ascend.observability": ["config/*.yaml"],
+        "vllm_ascend.entrypoints.systemone": ["NOTICE"],
     },
     python_requires=">=3.10",
     install_requires=get_requirements(),
@@ -522,6 +523,9 @@ setup(
             "ascend_model_loader = vllm_ascend:register_model_loader",
             "ascend_service_profiling = vllm_ascend:register_service_profiling",
             "ascend_model = vllm_ascend:register_model",
+        ],
+        "vllm.endpoint_plugins": [
+            "ascend_systemone = vllm_ascend.entrypoints.systemone.serving:SystemOnePlugin",
         ],
         "ms_service_metric.providers": [
             "vllm-ascend = vllm_ascend.observability:get_metric_provider",

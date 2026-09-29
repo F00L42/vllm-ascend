@@ -13,15 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# from collections.abc import Iterable
 # mypy: ignore-errors
 
+from collections.abc import Iterable
 
 import torch
 from vllm.distributed import tensor_model_parallel_all_gather
 from vllm.distributed.parallel_state import get_pp_group
 from vllm.model_executor.layers.mamba.gdn.qwen_gdn_linear_attn import QwenGatedDeltaNetAttention as _GDNBaseCls
-from vllm.model_executor.models.qwen3_5 import Qwen3_5DecoderLayer
+from vllm.model_executor.models.qwen3_5 import Qwen3_5DecoderLayer, Qwen3_5ForCausalLMBase
+from vllm.model_executor.models.utils import AutoWeightsLoader, WeightsMapper
 
 try:
     from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MultiTokenPredictor
@@ -35,9 +36,42 @@ from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_
 from vllm_ascend.ops.gdn import AscendGatedDeltaNetAttention
 from vllm_ascend.utils import vllm_version_is
 
+
+def _qwen3_5_text_load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+    # Backport the text checkpoint mapping from upstream Qwen3.5. In particular,
+    # Plumb retains the VL training stack's model.language_model.* prefix.
+    # AutoWeightsLoader still delegates layer packing and TP sharding to vLLM.
+    loader = AutoWeightsLoader(self, skip_prefixes=["mtp."])
+    return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+
+
+def _qwen3_5_text_mrope_input_positions(
+    self,
+    input_tokens: list[int],
+    mm_features: list[object],
+) -> tuple[torch.Tensor, int]:
+    if mm_features:
+        raise ValueError("Qwen3.5 text models do not accept multimodal features.")
+    positions = torch.arange(len(input_tokens), dtype=torch.long, device="cpu")
+    return positions.unsqueeze(0).expand(3, -1), 0
+
+
 if vllm_version_is("0.27.1"):
     import vllm.model_executor.models.qwen3_next as qwen3_next_module
     from vllm.model_executor.models.qwen3_next import _all_gather_hidden_and_residual
+
+    # Only supply capabilities absent from the pinned vLLM release. The native
+    # conditional-generation class keeps its own VL mapping and M-RoPE method;
+    # tied embeddings, generation, and hybrid prefix caching stay upstream.
+    if not hasattr(Qwen3_5ForCausalLMBase, "hf_to_vllm_mapper"):
+        Qwen3_5ForCausalLMBase.hf_to_vllm_mapper = WeightsMapper(
+            orig_to_new_prefix={"model.language_model.": "model."},
+        )
+        Qwen3_5ForCausalLMBase.load_weights = _qwen3_5_text_load_weights
+
+    if not hasattr(Qwen3_5ForCausalLMBase, "get_mrope_input_positions"):
+        Qwen3_5ForCausalLMBase.supports_mrope = True
+        Qwen3_5ForCausalLMBase.get_mrope_input_positions = _qwen3_5_text_mrope_input_positions
 
     def _ascend_all_gather_hidden_and_residual(
         hidden_states: torch.Tensor,

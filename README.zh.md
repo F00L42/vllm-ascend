@@ -94,6 +94,11 @@ vllm-ascend有主干分支和开发分支。
 
 请参阅[版本策略](https://docs.vllm.ai/projects/ascend/en/latest/community/versioning_policy.html)了解更多详细信息。
 
+## Plumb 决策服务
+
+本分支提供 Plumb-4B 的原生 `/v1/systemone` 接口，复用 vLLM 调度和 prefix caching。
+安装、启动和请求示例见 [Plumb SystemOne 使用说明](docs/usage/plumb_systemone.md)。
+
 ## 贡献
 
 请参考[CONTRIBUTING](https://docs.vllm.ai/projects/ascend/en/latest/developer_guide/contribution/index.html)文档了解更多关于开发环境搭建、功能测试以及 PR 提交规范的信息。
