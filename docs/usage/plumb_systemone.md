@@ -86,6 +86,9 @@ curl http://127.0.0.1:8009/v1/systemone \
 | `cache_salt` | 可选缓存隔离值；只有相同 salt 的请求可共享相应前缀 |
 
 响应保留 `model`、`answers`、`usage` 和 `latency_ms`。
+`score` 答案包含 TypeSafe SDK 必填的 `legend`，例如 `{"0": "Low", "1": "Medium", "2": "High"}`，与 `probabilities` 使用相同的等级键。
+字符串、对象和数组 criteria 原样保留；直接 HTTP 请求中的数字、布尔和 null 等级描述在 legend 中转换成字符串。
+已通过 `typesafe-sdk==0.7.2` 的客户端响应解析；SDK 将等级键转换成整数，可用 `result.scores["urgency"].legend[2]` 读取描述。
 `usage.input_tokens` 为每道 question 完整 prompt 的 token 数之和，缓存命中不改变此逻辑计数。
 `usage.output_tokens=0` 沿用开源决策 API 的业务含义；引擎内部实际执行一次首步采样，丢弃该 token，只读取候选原始 logprob。
 

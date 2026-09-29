@@ -142,7 +142,7 @@ class TestPlumbProtocol(unittest.TestCase):
         with self.assertRaises(ValueError):
             probabilities([0.0, math.nan], 2.07)
 
-    def test_reference_answer_shapes_do_not_round_or_add_kev_fields(self):
+    def test_sdk_answer_shapes_preserve_plumb_numerical_semantics(self):
         request = self.request(
             {
                 "n": {"type": "noul", "instructions": "n"},
@@ -157,9 +157,28 @@ class TestPlumbProtocol(unittest.TestCase):
         self.assertEqual(answers["c"]["confidence"], 0.5)
         self.assertEqual(answers["s"]["score"], 1.3)
         self.assertEqual(answers["s"]["probabilities"], {"0": 0.2, "1": 0.3, "2": 0.5})
-        self.assertNotIn("legend", answers["s"])
+        self.assertEqual(answers["s"]["legend"], {"0": "low", "1": "mid", "2": "high"})
+        self.assertNotIn("legend", answers["n"])
+        self.assertNotIn("legend", answers["c"])
         self.assertNotIn("input_tokens", answers["n"])
         json.dumps(answers, allow_nan=False)
+
+    def test_score_legend_preserves_structured_criteria_without_changing_prompt(self):
+        tokenizer = FakeTokenizer()
+        criteria = [{"deadline": "today"}, ["refund", "urgent"], True, 7, None]
+        request = self.request({"s": {"type": "score", "instructions": "urgency", "criteria": criteria}})
+        plans, _ = plan_request(request, tokenizer, 4096)
+        answer = to_answers([[0.1, 0.2, 0.3, 0.1, 0.3]], plans)["s"]
+        self.assertEqual(
+            answer["legend"],
+            {"0": {"deadline": "today"}, "1": ["refund", "urgent"], "2": "True", "3": "7", "4": "None"},
+        )
+        self.assertEqual(list(answer["legend"]), list(answer["probabilities"]))
+        options = json.loads(tokenizer.conversations[0][1]["content"])["options"]
+        self.assertEqual(
+            [option["description"] for option in options],
+            ["0: {'deadline': 'today'}", "1: ['refund', 'urgent']", "2: True", "3: 7", "4: None"],
+        )
 
 
 if __name__ == "__main__":

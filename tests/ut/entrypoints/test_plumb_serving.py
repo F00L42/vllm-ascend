@@ -9,6 +9,7 @@ import functools
 import importlib.util
 import math
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -297,3 +298,63 @@ def test_missing_or_invalid_calibration_fails_closed(serving, monkeypatch, confi
     model = SimpleNamespace(hf_config=SimpleNamespace(_commit_hash=None), revision="pinned-sha", model="repo")
     with pytest.raises(ValueError, match="temperature"):
         serving.load_temperature(model)
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        ["可以稍后处理", "本周处理", "今天处理"],
+        ["可以稍后处理", {"deadline": "本周", "days": 7}, ["今天处理", {"refund": True}]],
+    ],
+    ids=["issue-1-text-rubric", "structured-rubric"],
+)
+def test_typesafe_sdk_decodes_all_answer_types(serving, criteria):
+    # Exercise the real SDK request and response path without an NPU or network.
+    # Run with typesafe-sdk==0.7.2; it is a client test dependency, not a server dependency.
+    sdk = pytest.importorskip("typesafe_sdk")
+    httpx = pytest.importorskip("httpx2")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        service = serving.PlumbService(_Engine(executor))
+
+        def handle(request):
+            assert request.method == "POST" and request.url.path == "/v1/systemone"
+            typed_request = serving.SystemOneRequest.model_validate_json(request.content)
+            plans, tokens = serving.plan_request(typed_request, service.tokenizer, service.max_model_len)
+            response = service._build_response(
+                typed_request,
+                plans,
+                [[0.1, 0.8, 0.1], [0.812345, 0.187655], [0.2, 0.3, 0.5]],
+                tokens,
+                time.perf_counter(),
+            )
+            return httpx.Response(200, json=response, request=request)
+
+        with sdk.TypeSafeClient(
+            base_url="http://plumb.test",
+            model="plumb-4b",
+            api_key="local",
+            retry=sdk.RetryPolicy(max_retries=0),
+            transport=httpx.MockTransport(handle),
+        ) as client:
+            result = client.system_one(
+                state="订单被重复扣款，客户要求今天处理退款。",
+                questions={
+                    "department": sdk.Choice(
+                        instructions="这个问题应由哪个部门处理？",
+                        criteria={"network": "网络运维", "billing": "支付与账务", "delivery": "物流服务"},
+                    ),
+                    "refund_requested": sdk.Noul(instructions="客户是否明确提出退款要求？"),
+                    "urgency": sdk.Score(instructions="判断处理的紧急程度。", criteria=criteria),
+                },
+            )
+
+    assert result.choices["department"].choice == "billing"
+    assert result.nouls["refund_requested"].noul == 0.812345
+    assert result.scores["urgency"].score == pytest.approx(1.3)
+    assert result.scores["urgency"].confidence == 0.5
+    assert result.scores["urgency"].legend == dict(enumerate(criteria))
+    assert result.scores["urgency"].probabilities == {0: 0.2, 1: 0.3, 2: 0.5}
+    raw = result.raw_http_response.json()
+    assert raw["answers"]["urgency"]["legend"] == {str(index): level for index, level in enumerate(criteria)}
+    assert result.usage.input_tokens == raw["usage"]["input_tokens"] > 0
+    assert result.usage.output_tokens == 0

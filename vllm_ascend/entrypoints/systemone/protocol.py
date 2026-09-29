@@ -82,6 +82,7 @@ class PlumbQuestionPlan:
     option_ids: tuple[str, ...]
     token_ids: list[int]
     candidate_token_ids: list[int]
+    legend: dict[str, JsonValue] | None = None
 
 
 def decision_options(question: Noul | Choice | Score) -> list[tuple[str, str]]:
@@ -151,6 +152,14 @@ def plan_request(
                 option_ids=tuple(key for key, _ in options),
                 token_ids=token_ids,
                 candidate_token_ids=answer_token_ids[: len(options)],
+                # TypeSafe requires score rubrics separately from the model's
+                # numbered option text. Keep SDK-supported structured criteria.
+                legend={
+                    str(index): level if isinstance(level, (str, dict, list)) else str(level)
+                    for index, level in enumerate(question.criteria)
+                }
+                if question.type == "score"
+                else None,
             )
         )
         input_tokens += len(token_ids)
@@ -179,7 +188,11 @@ def build_answer(plan: PlumbQuestionPlan, values: Sequence[float]) -> dict[str, 
         # Ties retain the first option, matching Python's max in the reference.
         answer.update(choice=max(distribution, key=distribution.__getitem__), probabilities=distribution)
     else:
-        answer.update(score=sum(int(key) * value for key, value in distribution.items()), probabilities=distribution)
+        answer.update(
+            score=sum(int(key) * value for key, value in distribution.items()),
+            probabilities=distribution,
+            legend=plan.legend,
+        )
     return answer
 
 
