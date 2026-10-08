@@ -3,6 +3,7 @@
 本分支在 vLLM-Ascend `v0.27.1rc1` 上新增 `/v1/systemone` endpoint，配套 vLLM `v0.27.1`。
 直接加载原始 Plumb BF16 权重，不需要 Kev 导出器、pointer head 或单独的 JevK5 推理进程。
 每道 question 是一个原生生成请求，复用 vLLM 的并发调度、chunked prefill、prefix caching、取消和 DP 路由。
+同一套 endpoint 也可加载增训后的 Qwen3.6-27B，见 [通用答案 token 读出](systemone_token_readout.md)。
 
 ## 安装和启动
 
@@ -10,8 +11,8 @@
 
 ```bash
 cd /path/to/vllm-ascend
-git fetch origin codex/plumb-4b-a2
-git switch codex/plumb-4b-a2
+git fetch origin codex/systemone-token-readout
+git switch codex/systemone-token-readout
 git pull --ff-only
 python -m pip install --no-deps --no-build-isolation -e .
 
@@ -32,6 +33,8 @@ vllm serve crh225/plumb-4b \
 
 也可把模型参数换成本地下载目录；目录中保留 `jevk5_config.json`、tokenizer 和 chat template。
 temperature 从该文件读取，当前固定模型为 `2.07`；缺失时启动报错，不静默退回 `1.0`。
+默认读出模式为 `plumb`，也可显式传入 `--additional-config '{"systemone_config":{"mode":"plumb"}}'`。
+该模式不接受 temperature 覆盖；通用模型使用 `answer_tokens` 模式单独配置。
 修改源码后完整重启 API server 和 workers。首次安装必须刷新 editable 元数据，否则新增 entrypoint 不会出现。
 遗漏 `VLLM_PLUGINS` 中的 `ascend_systemone` 时，普通 vLLM 服务可能正常启动，但 `/v1/systemone` 返回 404。
 
@@ -78,6 +81,7 @@ curl http://127.0.0.1:8009/v1/systemone \
 | 字段/类型 | 含义 |
 |---|---|
 | `state` | 公共证据，保留 JSON 原值，放在每道问题 prompt 的共同前缀 |
+| `model` | 可省略，使用该实例第一个 served model name；显式传入时必须匹配实例配置的名称 |
 | `noul` | true/false，返回 true 的概率 |
 | `choice` | 2–16 个不同选项，支持名称列表或名称到描述的对象 |
 | `score` | 2–16 个有序等级，返回以 0 为起点的期望分数 |

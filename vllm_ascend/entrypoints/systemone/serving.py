@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM Ascend project
-"""Plumb decisions through the native vLLM generation and prefix-cache path."""
+"""Model-native answer-token readout through vLLM generation and prefix caching."""
 
 import logging
 import math
@@ -17,6 +17,7 @@ from vllm.tracing import contains_trace_headers, extract_trace_headers, log_trac
 from vllm.transformers_utils.repo_utils import get_hf_file_to_dict
 from vllm.utils.async_utils import make_async, merge_async_iterators
 
+from .config import load_readout_config
 from .protocol import MAX_OPTIONS, SystemOneRequest, get_answer_token_ids, plan_request, probabilities, to_answers
 
 logger = logging.getLogger(__name__)
@@ -41,73 +42,85 @@ def validate_runtime(config):
 
     model = config.model_config
     if model.runner_type != "generate" or model.hf_text_config.model_type != "qwen3_5_text":
-        raise ValueError("Plumb SystemOne requires the Qwen3.5 text model with --runner generate")
+        raise ValueError("SystemOne requires a Qwen3.5/3.6 language model with --runner generate")
     if config.use_v2_model_runner:
-        raise ValueError("Plumb candidate logprobs require VLLM_USE_V2_MODEL_RUNNER=0")
+        raise ValueError("SystemOne candidate logprobs require VLLM_USE_V2_MODEL_RUNNER=0")
     if model.logprobs_mode != "raw_logprobs":
-        raise ValueError("Plumb requires --logprobs-mode raw_logprobs")
+        raise ValueError("SystemOne requires --logprobs-mode raw_logprobs")
     if model.max_logprobs != -1 and model.max_logprobs < MAX_OPTIONS:
-        raise ValueError(f"Plumb requires --max-logprobs at least {MAX_OPTIONS}")
+        raise ValueError(f"SystemOne requires --max-logprobs at least {MAX_OPTIONS}")
     if config.speculative_config is not None or config.quant_config is not None:
-        raise ValueError("Plumb initially requires unquantized weights without speculative decoding")
+        raise ValueError("SystemOne initially requires unquantized weights without speculative decoding")
     if get_ascend_config().enable_reduce_sample:
-        raise ValueError("Plumb candidate logprobs require enable_reduce_sample=false")
+        raise ValueError("SystemOne candidate logprobs require enable_reduce_sample=false")
     if config.cache_config.enable_prefix_caching and (
         config.cache_config.mamba_cache_mode != "align" or not config.scheduler_config.enable_chunked_prefill
     ):
-        raise ValueError("Plumb hybrid prefix caching requires --mamba-cache-mode align and --enable-chunked-prefill")
+        raise ValueError(
+            "SystemOne hybrid prefix caching requires --mamba-cache-mode align and --enable-chunked-prefill"
+        )
 
 
 def extract_probabilities(output, plan, temperature):
     if len(output.outputs) != 1:
-        raise RuntimeError("Plumb expected exactly one completion per question")
+        raise RuntimeError("SystemOne expected exactly one completion per question")
     completion = output.outputs[0]
     if completion.finish_reason in ("error", "abort"):
-        raise RuntimeError(f"Plumb question ended with {completion.finish_reason}")
+        raise RuntimeError(f"SystemOne question ended with {completion.finish_reason}")
     if len(completion.token_ids) != 1 or not completion.logprobs or len(completion.logprobs) != 1:
-        raise RuntimeError("Plumb did not receive one complete step of candidate logprobs")
+        raise RuntimeError("SystemOne did not receive one complete step of candidate logprobs")
     scores = completion.logprobs[0]
     if any(token_id not in scores for token_id in plan.candidate_token_ids):
-        raise RuntimeError("Plumb response is missing candidate token logprobs; use the V1 runner")
+        raise RuntimeError("SystemOne response is missing candidate token logprobs; use the V1 runner")
     # logprob_i = logit_i - logsumexp(all logits). The common constant cancels
     # in the candidate-only softmax, preserving JevK5's calibrated readout.
     try:
         return probabilities([scores[token_id].logprob for token_id in plan.candidate_token_ids], temperature)
     except ValueError as exc:
-        raise RuntimeError("Plumb engine returned invalid candidate scores") from exc
+        raise RuntimeError("SystemOne engine returned invalid candidate scores") from exc
 
 
-class PlumbService:
+class SystemOneService:
     def __init__(self, engine):
         validate_runtime(engine.vllm_config)
         self.engine = engine
-        self.temperature = load_temperature(engine.model_config)
+        self.readout_config = load_readout_config(engine.vllm_config)
+        if self.readout_config.mode == "plumb":
+            self.temperature = load_temperature(engine.model_config)
+        else:
+            self.temperature = self.readout_config.temperature if self.readout_config.temperature is not None else 1.0
         self.tokenizer = engine.renderer.get_tokenizer()
         get_answer_token_ids(self.tokenizer)
         self.max_model_len = engine.model_config.max_model_len
         names = engine.model_config.served_model_name
-        self.names = {names} if isinstance(names, str) else set(names or [])
+        names = [names] if isinstance(names, str) else list(names or [engine.model_config.model])
+        self.default_model = names[0]
+        self.names = set(names)
         self.plan_async = make_async(plan_request, executor=engine.renderer._executor)
         self.response_async = make_async(self._build_response, executor=engine.renderer._executor)
 
     async def evaluate(self, request, raw_request):
-        if not envs.VLLM_SKIP_MODEL_NAME_VALIDATION and request.model not in self.names:
-            raise VLLMNotFoundError(f"Unknown served model: {request.model}")
+        model_name = self._model_name(request)
+        if not envs.VLLM_SKIP_MODEL_NAME_VALIDATION and model_name not in self.names:
+            raise VLLMNotFoundError(f"Unknown served model: {model_name}")
         started = time.perf_counter()
         plans, input_tokens = await self.plan_async(request, self.tokenizer, self.max_model_len)
         distributions = await self._execute(plans, request, raw_request)
         return await self.response_async(request, plans, distributions, input_tokens, started)
 
+    def _model_name(self, request):
+        return self.default_model if request.model is None else request.model
+
     def _build_response(self, request, plans, distributions, input_tokens, started):
         return {
-            "model": request.model,
+            "model": self._model_name(request),
             "answers": to_answers(distributions, plans),
             "usage": {"input_tokens": input_tokens, "output_tokens": 0},
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         }
 
     async def _execute(self, plans, request, raw_request):
-        parent = f"plumb-{BaseServing._base_request_id(raw_request)}"
+        parent = f"systemone-{BaseServing._base_request_id(raw_request)}"
         trace_headers = None
         if contains_trace_headers(raw_request.headers):
             if await self.engine.is_tracing_enabled():
@@ -150,7 +163,7 @@ class PlumbService:
         finally:
             await merged.aclose()
         if any(result is None for result in results):
-            raise RuntimeError("Plumb did not receive results for all questions")
+            raise RuntimeError("SystemOne did not receive results for all questions")
         return results
 
 
@@ -163,18 +176,21 @@ class SystemOnePlugin:
         @with_cancellation
         @load_aware_call
         async def systemone(request: SystemOneRequest, raw_request: Request):
-            service = getattr(raw_request.app.state, "plumb_service", None)
+            service = getattr(raw_request.app.state, "systemone_service", None)
             if service is None:
-                raise HTTPException(503, "Plumb engine is not available")
+                raise HTTPException(503, "SystemOne engine is not available")
             return JSONResponse(content=await service.evaluate(request, raw_request))
 
     async def init_state(self, engine_client, state, args):
-        state.plumb_service = None
+        state.systemone_service = None
         if engine_client is not None:
-            state.plumb_service = PlumbService(engine_client)
+            state.systemone_service = SystemOneService(engine_client)
             logger.info(
-                "Plumb endpoint /v1/systemone initialized: temperature=%s, max_prompt_tokens=%d, prefix_caching=%s",
-                state.plumb_service.temperature,
-                state.plumb_service.max_model_len - 1,
+                "SystemOne endpoint /v1/systemone initialized: model=%s, mode=%s, temperature=%s, "
+                "max_prompt_tokens=%d, prefix_caching=%s",
+                state.systemone_service.default_model,
+                state.systemone_service.readout_config.mode,
+                state.systemone_service.temperature,
+                state.systemone_service.max_model_len - 1,
                 engine_client.vllm_config.cache_config.enable_prefix_caching,
             )

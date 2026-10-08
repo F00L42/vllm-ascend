@@ -5,7 +5,7 @@
 # 85238d7be5527370c43206fe54cd752eb3134c1b. The prompt follows SemIf
 # (TheoLeeCJ/SemIf, MIT), as attributed by JevK5. Changes add request validation,
 # token-only vLLM request planning, and CPU readout from candidate logprobs.
-"""Plumb's prompt and decision semantics for the TypeSafe /v1/systemone API."""
+"""TypeSafe /v1/systemone schema and native answer-token decision semantics."""
 
 import json
 import math
@@ -57,12 +57,12 @@ Question = Annotated[Noul | Choice | Score, Field(discriminator="type")]
 class SystemOneRequest(BaseModel):
     state: JsonValue
     questions: dict[str, Question] = Field(min_length=1)
-    model: str = "plumb-4b"
+    model: str | None = None
     priority: int = 0
     cache_salt: str | None = None
 
 
-class PlumbTokenizer(Protocol):
+class SystemOneTokenizer(Protocol):
     def encode(self, text: str, *, add_special_tokens: bool) -> list[int]: ...
 
     def apply_chat_template(
@@ -76,7 +76,7 @@ class PlumbTokenizer(Protocol):
 
 
 @dataclass(frozen=True)
-class PlumbQuestionPlan:
+class QuestionPlan:
     question_id: str
     kind: Literal["noul", "choice", "score"]
     option_ids: tuple[str, ...]
@@ -112,19 +112,19 @@ def messages(state: JsonValue, criterion: JsonValue, options: list[str]) -> list
     ]
 
 
-def get_answer_token_ids(tokenizer: PlumbTokenizer) -> list[int]:
+def get_answer_token_ids(tokenizer: SystemOneTokenizer) -> list[int]:
     slots = [tokenizer.encode(letter, add_special_tokens=False) for letter in LETTERS]
     if any(len(token_ids) != 1 for token_ids in slots):
-        raise ValueError("Every Plumb answer letter A..P must encode as one token")
+        raise ValueError("Every SystemOne answer letter A..P must encode as one token")
     token_ids = [slot[0] for slot in slots]
     if len(set(token_ids)) != MAX_OPTIONS:
-        raise ValueError("Plumb answer letters A..P must have distinct token IDs")
+        raise ValueError("SystemOne answer letters A..P must have distinct token IDs")
     return token_ids
 
 
 def plan_request(
-    request: SystemOneRequest, tokenizer: PlumbTokenizer, max_model_len: int
-) -> tuple[list[PlumbQuestionPlan], int]:
+    request: SystemOneRequest, tokenizer: SystemOneTokenizer, max_model_len: int
+) -> tuple[list[QuestionPlan], int]:
     """Encode every question without truncation; reserve one native output token."""
     answer_token_ids = get_answer_token_ids(tokenizer)
     plans = []
@@ -146,7 +146,7 @@ def plan_request(
                 f"max_model_len={max_model_len} must also reserve {INTERNAL_OUTPUT_TOKENS} output token"
             )
         plans.append(
-            PlumbQuestionPlan(
+            QuestionPlan(
                 question_id=question_id,
                 kind=question.type,
                 option_ids=tuple(key for key, _ in options),
@@ -169,7 +169,7 @@ def plan_request(
 def probabilities(logprobs: Sequence[float], temperature: float) -> list[float]:
     """Calibrate only the candidate scores; the full-vocabulary offset cancels."""
     if not math.isfinite(temperature) or temperature <= 0:
-        raise ValueError("Plumb calibration temperature must be positive and finite")
+        raise ValueError("SystemOne readout temperature must be positive and finite")
     if not 2 <= len(logprobs) <= MAX_OPTIONS or any(not math.isfinite(value) for value in logprobs):
         raise ValueError(f"Expected 2..{MAX_OPTIONS} finite candidate logprobs")
     # Subtract before dividing, so a small valid temperature cannot overflow.
@@ -179,7 +179,7 @@ def probabilities(logprobs: Sequence[float], temperature: float) -> list[float]:
     return [weight / total for weight in weights]
 
 
-def build_answer(plan: PlumbQuestionPlan, values: Sequence[float]) -> dict[str, Any]:
+def build_answer(plan: QuestionPlan, values: Sequence[float]) -> dict[str, Any]:
     distribution = dict(zip(plan.option_ids, values, strict=True))
     answer: dict[str, Any] = {"type": plan.kind, "confidence": max(values)}
     if plan.kind == "noul":
@@ -196,5 +196,5 @@ def build_answer(plan: PlumbQuestionPlan, values: Sequence[float]) -> dict[str, 
     return answer
 
 
-def to_answers(probs: list[list[float]], plans: list[PlumbQuestionPlan]) -> dict[str, Any]:
+def to_answers(probs: list[list[float]], plans: list[QuestionPlan]) -> dict[str, Any]:
     return {plan.question_id: build_answer(plan, values) for values, plan in zip(probs, plans, strict=True)}

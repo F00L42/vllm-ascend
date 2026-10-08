@@ -166,6 +166,30 @@ class TestAscendConfig(TestBase):
         self.assertFalse(config.scheduler_config.short_request_first_config.enabled)
         self.assertFalse(config.rl_config.enabled)
 
+    def test_systemone_config_defaults_are_independent(self):
+        first = AscendConfig(sparse_kv_offload_config=SimpleNamespace(enabled=False))
+        second = AscendConfig(sparse_kv_offload_config=SimpleNamespace(enabled=False))
+
+        self.assertEqual(first.systemone_config, {})
+        first.systemone_config["mode"] = "answer_tokens"
+        self.assertEqual(second.systemone_config, {})
+
+    def test_systemone_config_preserves_endpoint_options(self):
+        options = {"mode": "answer_tokens", "temperature": 1.0}
+        config = AscendConfig(
+            sparse_kv_offload_config=SimpleNamespace(enabled=False),
+            systemone_config=options,
+        )
+
+        self.assertEqual(config.systemone_config, options)
+
+    def test_systemone_config_rejects_non_mapping(self):
+        with self.assertRaisesRegex(ValueError, "systemone_config"):
+            AscendConfig(
+                sparse_kv_offload_config=SimpleNamespace(enabled=False),
+                systemone_config="answer_tokens",  # type: ignore[arg-type]
+            )
+
     def test_eplb_load_collection_phase_defaults_to_all(self):
         self.assertEqual(EplbConfig().load_collection_phase, "all")
 

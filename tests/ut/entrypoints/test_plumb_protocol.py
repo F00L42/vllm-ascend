@@ -65,7 +65,7 @@ class TestPlumbProtocol(unittest.TestCase):
         self.assertEqual(plans[0].option_ids, ("true", "false"))
         self.assertEqual(plans[0].candidate_token_ids, [32, 33])
         self.assertEqual(tokens, len(plans[0].token_ids))
-        self.assertEqual(request.model, "plumb-4b")
+        self.assertIsNone(request.model)
 
     def test_choice_list_deduplicates_without_sorting(self):
         request = self.request({"q": {"type": "choice", "instructions": "pick", "criteria": ["z", "a", "z"]}})

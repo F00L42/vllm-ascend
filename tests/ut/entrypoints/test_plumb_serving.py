@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import functools
 import importlib.util
+import json
 import math
 import sys
 import time
@@ -68,18 +69,21 @@ class _DependencyImports(ast.NodeTransformer):
     """Inject framework dependencies while executing the actual service source."""
 
     def visit_ImportFrom(self, node):
-        if (node.module or "").startswith("vllm") or (node.level and node.module == "protocol"):
+        if (node.module or "").startswith("vllm") or (node.level and node.module in ("protocol", "config")):
             return None
         return node
 
 
 @pytest.fixture
 def serving(monkeypatch):
-    spec = importlib.util.spec_from_file_location("plumb_serving_protocol_cpu", _SOURCE_DIR / "protocol.py")
-    assert spec is not None and spec.loader is not None
-    protocol = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, spec.name, protocol)
-    spec.loader.exec_module(protocol)
+    dependencies = {}
+    for name in ("protocol", "config"):
+        spec = importlib.util.spec_from_file_location(f"systemone_serving_{name}_cpu", _SOURCE_DIR / f"{name}.py")
+        assert spec is not None and spec.loader is not None
+        dependency = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, dependency)
+        spec.loader.exec_module(dependency)
+        dependencies[name] = dependency
 
     module = ModuleType("plumb_serving_cpu")
     module.__dict__.update(
@@ -102,24 +106,35 @@ def serving(monkeypatch):
     source = _SOURCE_DIR / "serving.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.level and node.module == "protocol":
-            module.__dict__.update({name.asname or name.name: getattr(protocol, name.name) for name in node.names})
+        if isinstance(node, ast.ImportFrom) and node.level and node.module in dependencies:
+            module.__dict__.update(
+                {name.asname or name.name: getattr(dependencies[node.module], name.name) for name in node.names}
+            )
     tree = _DependencyImports().visit(tree)
     exec(compile(ast.fix_missing_locations(tree), str(source), "exec"), module.__dict__)
-    module.protocol = protocol
+    module.protocol = dependencies["protocol"]
     return module
 
 
 class _Tokenizer:
+    answer_token_start = 32
+
     def encode(self, text, *, add_special_tokens):
         assert not add_special_tokens
         if len(text) == 1 and text in "ABCDEFGHIJKLMNOP":
-            return [32 + ord(text) - ord("A")]
+            return [self.answer_token_start + ord(text) - ord("A")]
         return [ord(character) for character in text]
 
     def apply_chat_template(self, messages, **kwargs):
         assert kwargs == {"tokenize": False, "add_generation_prompt": True, "enable_thinking": False}
         return "<system>" + messages[0]["content"] + "<user>" + messages[1]["content"] + "<assistant>"
+
+
+class _DifferentTokenizer(_Tokenizer):
+    answer_token_start = 4000
+
+    def apply_chat_template(self, messages, **kwargs):
+        return "<new-model-template>" + super().apply_chat_template(messages, **kwargs)
 
 
 def _output(scores):
@@ -136,7 +151,7 @@ def _output(scores):
 
 
 class _Engine:
-    def __init__(self, executor, *, fail=False, block=False):
+    def __init__(self, executor, *, fail=False, block=False, generic=False):
         self.calls = []
         self.completed = []
         self.cleaned = set()
@@ -164,8 +179,19 @@ class _Engine:
             quant_config=None,
             cache_config=SimpleNamespace(enable_prefix_caching=True, mamba_cache_mode="align"),
             scheduler_config=SimpleNamespace(enable_chunked_prefill=True),
+            additional_config={"systemone_config": {"mode": "answer_tokens"}} if generic else {},
         )
-        self.renderer = SimpleNamespace(get_tokenizer=_Tokenizer, _executor=executor)
+        self.renderer = SimpleNamespace(
+            get_tokenizer=_DifferentTokenizer if generic else _Tokenizer, _executor=executor
+        )
+        if generic:
+            self.model_config.hf_config = SimpleNamespace(
+                model_type="qwen3_5",
+                architectures=["Qwen3_5ForConditionalGeneration"],
+                tie_word_embeddings=False,
+                text_config=self.model_config.hf_text_config,
+            )
+            self.model_config.served_model_name = ["qwen3.6-27b-custom", "qwen-custom"]
 
     async def is_tracing_enabled(self):
         return True
@@ -186,7 +212,9 @@ class _Engine:
             else:
                 self.second_finished.set()
             self.completed.append(index)
-            scores = {32: -10.0, 33: -12.07} if index == 0 else {32: -22.07, 33: -20.0, 34: -24.14}
+            candidates = kwargs["sampling_params"].logprob_token_ids
+            values = [-10.0, -12.07] if index == 0 else [-22.07, -20.0, -24.14]
+            scores = dict(zip(candidates, values, strict=True))
             yield _output({**scores, 999: -0.001})
         finally:
             self.cleaned.add(index)
@@ -212,24 +240,35 @@ def _raw_request():
     return SimpleNamespace(headers={"X-Request-Id": "request-id", "traceparent": "trace-id"})
 
 
-def test_concurrent_native_requests_preserve_prefix_and_restore_answer_order(serving):
+@pytest.mark.parametrize("generic", [False, True], ids=["plumb", "answer-tokens"])
+def test_concurrent_native_requests_preserve_prefix_and_restore_answer_order(serving, generic, monkeypatch):
     async def run(executor):
-        engine = _Engine(executor)
-        service = serving.PlumbService(engine)
+        engine = _Engine(executor, generic=generic)
+        if generic:
+            # A normal checkpoint does not need or read Plumb calibration metadata.
+            def unexpected_calibration_read(*args):
+                raise AssertionError("answer_tokens mode tried to load jevk5_config.json")
+
+            monkeypatch.setattr(serving, "get_hf_file_to_dict", unexpected_calibration_read)
+        service = serving.SystemOneService(engine)
         request = _request(serving)
         plans, tokens = serving.plan_request(request, service.tokenizer, service.max_model_len)
         response = await asyncio.wait_for(service.evaluate(request, _raw_request()), timeout=2)
         assert engine.completed == [1, 0]
         assert list(response["answers"]) == ["first", "second"]
-        assert response["answers"]["first"]["noul"] == pytest.approx(1 / (1 + math.exp(-1)))
+        temperature = 1.0 if generic else 2.07
+        assert service.temperature == temperature
+        assert response["answers"]["first"]["noul"] == pytest.approx(1 / (1 + math.exp(-2.07 / temperature)))
         assert response["answers"]["second"]["choice"] == "blue"
         assert response["usage"] == {"input_tokens": tokens, "output_tokens": 0}
+        assert request.model is None
+        assert response["model"] == ("qwen3.6-27b-custom" if generic else "plumb-4b")
         assert engine.cleaned == {0, 1}
         for index, call in enumerate(engine.calls):
             assert call["prompt"] == {"prompt_token_ids": plans[index].token_ids, "cache_salt": request.cache_salt}
             assert call["priority"] == 3
             assert call["trace_headers"] == {"traceparent": "trace-id"}
-            assert call["request_id"] == f"plumb-request-id-{index}"
+            assert call["request_id"] == f"systemone-request-id-{index}"
             params = call["sampling_params"]
             assert params.max_tokens == 1
             assert params.logprob_token_ids == plans[index].candidate_token_ids
@@ -239,9 +278,102 @@ def test_concurrent_native_requests_preserve_prefix_and_restore_answer_order(ser
             assert params.output_kind == serving.RequestOutputKind.FINAL_ONLY
             assert not getattr(params, "skip_reading_prefix_cache", False)
         assert plans[0].token_ids[:256] == plans[1].token_ids[:256]
+        assert plans[0].candidate_token_ids == ([4000, 4001] if generic else [32, 33])
+        if generic:
+            assert "".join(map(chr, plans[0].token_ids)).startswith("<new-model-template>")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         asyncio.run(run(executor))
+
+
+def test_generic_readout_honors_explicit_temperature(serving):
+    async def run(executor):
+        engine = _Engine(executor, generic=True)
+        engine.vllm_config.additional_config["systemone_config"]["temperature"] = 2.0
+        service = serving.SystemOneService(engine)
+        result = await asyncio.wait_for(service.evaluate(_request(serving), _raw_request()), timeout=2)
+        assert result["answers"]["first"]["noul"] == pytest.approx(1 / (1 + math.exp(-2.07 / 2.0)))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+def test_explicit_alias_is_accepted_and_unknown_model_never_reaches_engine(serving):
+    async def run(executor):
+        engine = _Engine(executor, generic=True)
+        service = serving.SystemOneService(engine)
+        request = _request(serving)
+        request.model = "other-model"
+        with pytest.raises(serving.VLLMNotFoundError, match="Unknown served model"):
+            await service.evaluate(request, _raw_request())
+        assert not engine.calls
+        request.model = "qwen-custom"
+        result = await asyncio.wait_for(service.evaluate(request, _raw_request()), timeout=2)
+        assert result["model"] == "qwen-custom"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [(["first", "second"], "first"), ("single", "single"), ([], "model-repository"), (None, "model-repository")],
+)
+def test_omitted_request_model_uses_instance_default_alias(serving, names, expected):
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        engine = _Engine(executor, generic=True)
+        engine.model_config.served_model_name = names
+        service = serving.SystemOneService(engine)
+        request = _request(serving)
+        plans, tokens = serving.plan_request(request, service.tokenizer, service.max_model_len)
+        result = service._build_response(request, plans, [[0.7, 0.3], [0.2, 0.6, 0.2]], tokens, time.perf_counter())
+        assert result["model"] == expected
+
+
+def test_default_plumb_mode_still_requires_checkpoint_calibration(serving, monkeypatch):
+    monkeypatch.setattr(serving, "get_hf_file_to_dict", lambda *args: None)
+    with ThreadPoolExecutor(max_workers=1) as executor, pytest.raises(ValueError, match="jevk5_config.json"):
+        serving.SystemOneService(_Engine(executor))
+
+
+@pytest.mark.parametrize("generic", [False, True], ids=["plumb", "answer-tokens"])
+def test_entrypoint_initializes_instance_service_and_mounts_shared_endpoint(serving, generic):
+    async def run(executor):
+        state = SimpleNamespace()
+        plugin = serving.SystemOnePlugin()
+        engine = _Engine(executor, generic=generic)
+        await plugin.init_state(engine, state, None)
+        app = serving.FastAPI()
+        app.state.systemone_service = state.systemone_service
+        plugin.attach_router(app)
+        route = next(route for route in app.routes if route.path == "/v1/systemone")
+        assert route.methods == {"POST"}
+        raw = _raw_request()
+        raw.app = app
+        response = await asyncio.wait_for(route.endpoint(_request(serving), raw), timeout=2)
+        assert response.status_code == 200
+        result = json.loads(response.body)
+        assert result["model"] == ("qwen3.6-27b-custom" if generic else "plumb-4b")
+        assert result["answers"]["second"]["choice"] == "blue"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+def test_endpoint_without_an_engine_returns_service_unavailable(serving):
+    async def run():
+        plugin = serving.SystemOnePlugin()
+        app = serving.FastAPI()
+        await plugin.init_state(None, app.state, None)
+        plugin.attach_router(app)
+        route = next(route for route in app.routes if route.path == "/v1/systemone")
+        raw = _raw_request()
+        raw.app = app
+        with pytest.raises(serving.HTTPException) as raised:
+            await route.endpoint(_request(serving), raw)
+        assert raised.value.status_code == 503
+
+    asyncio.run(run())
 
 
 def test_missing_candidate_is_rejected_instead_of_renormalized(serving):
@@ -260,7 +392,7 @@ def test_nonfinite_engine_scores_are_server_errors(serving):
 def test_failure_or_cancellation_closes_sibling_generators(serving, cancel):
     async def run(executor):
         engine = _Engine(executor, fail=not cancel, block=cancel)
-        service = serving.PlumbService(engine)
+        service = serving.SystemOneService(engine)
         task = asyncio.create_task(service.evaluate(_request(serving), _raw_request()))
         await asyncio.wait_for(engine.all_started.wait(), timeout=2)
         if cancel:
@@ -308,13 +440,15 @@ def test_missing_or_invalid_calibration_fails_closed(serving, monkeypatch, confi
     ],
     ids=["issue-1-text-rubric", "structured-rubric"],
 )
-def test_typesafe_sdk_decodes_all_answer_types(serving, criteria):
+@pytest.mark.parametrize("generic", [False, True], ids=["plumb", "answer-tokens"])
+def test_typesafe_sdk_decodes_all_answer_types(serving, criteria, generic):
     # Exercise the real SDK request and response path without an NPU or network.
     # Run with typesafe-sdk==0.7.2; it is a client test dependency, not a server dependency.
     sdk = pytest.importorskip("typesafe_sdk")
     httpx = pytest.importorskip("httpx2")
     with ThreadPoolExecutor(max_workers=1) as executor:
-        service = serving.PlumbService(_Engine(executor))
+        service = serving.SystemOneService(_Engine(executor, generic=generic))
+        model = "qwen3.6-27b-custom" if generic else "plumb-4b"
 
         def handle(request):
             assert request.method == "POST" and request.url.path == "/v1/systemone"
@@ -331,7 +465,7 @@ def test_typesafe_sdk_decodes_all_answer_types(serving, criteria):
 
         with sdk.TypeSafeClient(
             base_url="http://plumb.test",
-            model="plumb-4b",
+            model=model,
             api_key="local",
             retry=sdk.RetryPolicy(max_retries=0),
             transport=httpx.MockTransport(handle),
@@ -355,6 +489,7 @@ def test_typesafe_sdk_decodes_all_answer_types(serving, criteria):
     assert result.scores["urgency"].legend == dict(enumerate(criteria))
     assert result.scores["urgency"].probabilities == {0: 0.2, 1: 0.3, 2: 0.5}
     raw = result.raw_http_response.json()
+    assert raw["model"] == model
     assert raw["answers"]["urgency"]["legend"] == {str(index): level for index, level in enumerate(criteria)}
     assert result.usage.input_tokens == raw["usage"]["input_tokens"] > 0
     assert result.usage.output_tokens == 0

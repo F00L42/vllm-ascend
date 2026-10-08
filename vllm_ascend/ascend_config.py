@@ -354,6 +354,7 @@ class AscendConfig:
                 "method": null,
                 "method_params": {}
             },
+            "systemone_config": {},
             "sparse_kv_offload_config": {
                 "enabled": false,
                 "topk_buffer_size": 4096,
@@ -435,6 +436,9 @@ class AscendConfig:
     finegrained_tp_config: FinegrainedTPConfig = dataclasses.field(default_factory=lambda: FinegrainedTPConfig())
     scheduler_config: SchedulerConfig = dataclasses.field(default_factory=lambda: SchedulerConfig())
     dynamic_spec_config: DynamicSpecConfig = dataclasses.field(default_factory=lambda: DynamicSpecConfig())
+    # Endpoint-owned options, e.g. {"mode": "answer_tokens"}. The optional
+    # ascend_systemone endpoint validates inner keys and readout semantics.
+    systemone_config: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Still factory-injected: construction depends on vllm_config.
     sparse_kv_offload_config: Any = dataclasses.field(kw_only=True)
 
