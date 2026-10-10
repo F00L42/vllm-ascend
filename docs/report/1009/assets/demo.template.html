@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Jev-like 工程能力进展</title>
+  <style>
+    :root { --ink:#15283f; --muted:#52657b; --line:#d9e2ed; --blue:#185ee8; --blue-soft:#edf3ff; --teal:#087c78; --teal-soft:#eaf8f5; --violet:#6b48ba; --violet-soft:#f2edfb; --amber:#975b0a; --amber-soft:#fff3dc; --paper:#fff; --bg:#f4f7fb; }
+    * { box-sizing:border-box; }
+    html { font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif; color:var(--ink); background:var(--bg); }
+    body { margin:0; }
+    button,a { -webkit-tap-highlight-color:transparent; }
+    button { font:inherit; cursor:pointer; }
+    button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #4d87ef; outline-offset:4px; }
+    button:disabled { cursor:default; opacity:.32; }
+    [hidden] { display:none !important; }
+    .topbar { height:70px; padding:0 36px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:var(--paper); gap:20px; }
+    .brand { font-size:19px; font-weight:700; letter-spacing:.01em; white-space:nowrap; }
+    .brand span { margin-right:12px; color:var(--blue); font-weight:800; }
+    .top-actions { display:flex; gap:10px; align-items:center; }
+    .date { font-size:14px; color:var(--muted); margin-right:10px; }
+    .plain-button { background:transparent; border:1px solid var(--line); border-radius:8px; padding:10px 16px; color:var(--ink); font-size:15px; }
+    .plain-button:hover { background:var(--bg); border-color:#a6b8cc; }
+    .app { display:grid; grid-template-columns:204px minmax(0,1fr); min-height:calc(100svh - 70px); }
+    .sidebar { padding:35px 18px 26px 24px; border-right:1px solid var(--line); display:flex; flex-direction:column; gap:9px; }
+    .nav-label { font-size:13px; color:var(--muted); letter-spacing:.14em; margin:0 12px 18px; }
+    .nav-item { display:flex; align-items:center; gap:13px; width:100%; text-align:left; border:0; color:var(--muted); background:transparent; padding:15px 12px; border-radius:9px; font-size:16px; line-height:1.5; }
+    .nav-item .num { font-size:13px; font-variant-numeric:tabular-nums; opacity:.7; }
+    .nav-item:hover { background:#eaf0f8; }
+    .nav-item[aria-current="step"] { background:var(--blue-soft); color:var(--blue); font-weight:700; }
+    .sidebar-note { margin-top:auto; padding:32px 12px 0; font-size:13px; line-height:1.8; color:var(--muted); }
+    main { min-width:0; display:flex; flex-direction:column; }
+    .slide { min-height:calc(100svh - 148px); padding:38px clamp(28px,4vw,76px) 30px; display:flex; flex-direction:column; background:var(--paper); gap:24px; }
+    .slide-header { max-width:1400px; }
+    .eyebrow { display:flex; align-items:center; gap:12px; font-size:15px; font-weight:600; color:var(--blue); margin:0 0 15px; }
+    .eyebrow .state { color:var(--muted); font-size:13px; font-weight:500; border-left:1px solid #b8c9dc; padding-left:12px; }
+    h1 { font-size:clamp(31px,2.75vw,52px); line-height:1.26; letter-spacing:-.035em; margin:0; font-weight:750; }
+    .lead { font-size:clamp(18px,1.35vw,24px); line-height:1.6; margin:14px 0 0; max-width:1240px; color:var(--muted); }
+    .slide-content { flex:1; display:flex; flex-direction:column; justify-content:center; gap:24px; }
+    .takeaway { border-left:4px solid var(--blue); padding:8px 0 8px 18px; margin:0; font-size:clamp(18px,1.45vw,26px); line-height:1.55; font-weight:650; }
+    .slide-foot { display:flex; align-items:center; justify-content:space-between; gap:15px; margin-top:auto; font-size:14px; color:var(--muted); }
+    .text-button { background:none; border:0; padding:7px 0; font-size:14px; color:var(--blue); text-decoration:underline; text-underline-offset:4px; }
+    .diagram { background:var(--bg); border:1px solid var(--line); border-radius:16px; padding:28px; }
+    .routes { display:grid; grid-template-columns:1fr 1fr; gap:26px; }
+    .route { padding:25px 28px; border-radius:14px; border:1px solid var(--line); }
+    .route.kev { background:var(--violet-soft); border-color:#dacded; }
+    .route.lm { background:var(--teal-soft); border-color:#b8ded8; }
+    .route h2 { font-size:27px; margin:0 0 8px; }
+    .route .hint { font-size:16px; color:var(--muted); margin:0 0 24px; }
+    .pipeline { display:flex; flex-direction:column; align-items:center; gap:10px; }
+    .node { width:100%; text-align:center; background:#fff; border:1px solid var(--line); border-radius:9px; padding:16px 18px; font-size:clamp(18px,1.35vw,25px); line-height:1.45; }
+    .node small { display:block; font-size:15px; color:var(--muted); margin-top:3px; }
+    .node.focus { background:var(--violet); border-color:var(--violet); color:white; font-weight:700; }
+    .lm .node.focus { background:var(--teal); border-color:var(--teal); }
+    .flow-arrow { width:1px; height:16px; background:#98aabd; position:relative; flex-shrink:0; }
+    .flow-arrow:after { content:""; position:absolute; bottom:-1px; left:-4px; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid #98aabd; }
+    .common-result { display:flex; justify-content:center; gap:16px; align-items:center; font-size:22px; font-weight:650; padding:18px; color:var(--ink); background:#f4f7fb; border:1px solid var(--line); border-radius:10px; }
+    .common-result span { font-size:17px; color:var(--muted); font-weight:400; }
+    .native-top { display:flex; align-items:center; gap:18px; justify-content:center; padding:20px; border-bottom:1px solid var(--line); margin-bottom:24px; font-size:22px; font-weight:650; }
+    .native-top code { font-size:21px; color:var(--blue); font-family:Consolas,monospace; }
+    .native-lanes { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+    .native-lane { border:1px solid #cad7e7; border-radius:12px; background:white; padding:22px; }
+    .native-lane h2 { font-size:24px; margin:0 0 17px; }
+    .native-lane .engine { padding:19px; border-radius:8px; background:var(--blue-soft); color:var(--blue); text-align:center; font-size:23px; font-weight:650; }
+    .native-lane:last-child .engine { color:var(--teal); background:var(--teal-soft); }
+    .native-lane p { margin:16px 0 0; text-align:center; color:var(--muted); font-size:18px; line-height:1.6; }
+    .native-services { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:23px; }
+    .native-services div { padding:19px 14px; background:#fff; border:1px solid var(--line); border-radius:9px; text-align:center; font-size:19px; }
+    .native-services strong { display:block; margin-bottom:6px; font-size:22px; }
+    .native-services span { font-size:15px; color:var(--muted); }
+    .split-content { display:grid; grid-template-columns:.82fr 1.18fr; gap:28px; align-items:stretch; }
+    .sdk-panel { border-radius:13px; padding:30px; background:var(--blue-soft); }
+    .sdk-panel h2,.reuse-panel h2 { font-size:25px; margin:0 0 24px; }
+    .answer-row { display:grid; grid-template-columns:100px 1fr; align-items:center; padding:19px 0; gap:15px; border-bottom:1px solid #cedcf3; font-size:21px; }
+    .answer-row code { color:var(--blue); font-family:Consolas,monospace; font-size:19px; font-weight:600; }
+    .sdk-proof { font-size:14px; color:var(--blue); margin:22px 0 0; line-height:1.6; }
+    .reuse-panel { border:1px solid #b8ddd8; background:var(--teal-soft); border-radius:13px; padding:30px; }
+    .model-pair { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .model-box { border:1px solid #b8ddd8; background:#fff; text-align:center; padding:26px 12px; border-radius:10px; }
+    .model-box strong { display:block; font-size:clamp(23px,1.8vw,33px); margin-bottom:12px; }
+    .model-box code { font-size:16px; color:var(--teal); }
+    .reuse-core { background:var(--teal); color:#fff; text-align:center; border-radius:10px; padding:24px 15px; margin-top:22px; }
+    .reuse-core strong { display:block; font-size:24px; margin-bottom:11px; }
+    .reuse-core span { font-size:17px; }
+    .reuse-panel .reuse-note { margin:19px 0 0; font-size:19px; line-height:1.6; }
+    .performance-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+    .performance-card { border:1px solid #b8d0fa; background:var(--blue-soft); border-radius:14px; padding:28px; }
+    .performance-card.large { background:var(--teal-soft); border-color:#b8ddd8; }
+    .performance-card h2 { font-size:28px; margin:0 0 8px; }
+    .performance-card .model-detail { font-size:16px; line-height:1.6; color:var(--muted); margin:0; }
+    .performance-metrics { display:grid; grid-template-columns:1.2fr 1fr; gap:18px; margin-top:26px; }
+    .performance-metric strong { display:block; color:var(--blue); font-size:clamp(38px,3.1vw,58px); line-height:1.15; letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
+    .large .performance-metric strong { color:var(--teal); }
+    .performance-metric small { font-size:20px; margin-left:5px; font-weight:600; letter-spacing:0; }
+    .performance-metric span { display:block; font-size:17px; color:var(--muted); margin-top:12px; }
+    .performance-specs { display:grid; grid-template-columns:1fr 1.15fr 1.2fr; border:1px solid var(--line); background:var(--bg); border-radius:11px; }
+    .performance-specs div { padding:18px 20px; }
+    .performance-specs div+div { border-left:1px solid var(--line); }
+    .performance-specs strong { display:block; font-size:20px; line-height:1.45; }
+    .performance-specs span { display:block; font-size:14px; line-height:1.5; margin-top:6px; color:var(--muted); }
+    .shared-engine { display:grid; grid-template-columns:1fr 1.1fr 1fr; align-items:center; gap:24px; padding:34px 28px; }
+    .request-stack,.result-stack { display:flex; flex-direction:column; gap:24px; }
+    .service-row { padding:24px 18px; border:1px solid #b8d0fa; border-radius:11px; background:var(--blue-soft); text-align:center; }
+    .service-row.generation { border-color:#d7c8f0; background:var(--violet-soft); }
+    .service-row strong { display:block; font-size:25px; margin-bottom:8px; }
+    .service-row span { font-size:18px; color:var(--muted); line-height:1.5; }
+    .backbone { position:relative; min-height:230px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:var(--ink); color:#fff; border-radius:16px; padding:25px; }
+    .backbone:before,.backbone:after { content:""; position:absolute; height:2px; width:24px; background:#9bacbf; top:50%; }
+    .backbone:before { left:-25px; }
+    .backbone:after { right:-25px; }
+    .backbone strong { font-size:clamp(29px,2.35vw,44px); line-height:1.35; margin-bottom:16px; }
+    .backbone span { font-size:18px; color:#d0dcef; line-height:1.8; }
+    .current-status { display:flex; align-items:center; gap:20px; padding:21px 25px; background:var(--amber-soft); border:1px solid #ead3a8; border-radius:10px; font-size:19px; line-height:1.6; }
+    .current-status strong { color:var(--amber); white-space:nowrap; }
+    .batch-layout { display:grid; grid-template-columns:1.22fr .78fr; gap:25px; align-items:stretch; }
+    .batch-demo { background:var(--bg); border:1px solid var(--line); border-radius:14px; padding:28px; }
+    .batch-caption { display:flex; align-items:center; justify-content:space-between; gap:15px; font-size:18px; margin-bottom:24px; }
+    .batch-caption span { font-size:14px; color:var(--muted); }
+    .tokens { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+    .token { min-height:130px; padding:22px 8px; background:var(--teal-soft); border:1px solid #a9d7c8; border-radius:10px; text-align:center; display:flex; flex-direction:column; justify-content:center; gap:8px; }
+    .token strong { font-size:28px; }
+    .token span { font-size:17px; color:var(--teal); }
+    .token.decision { background:var(--amber-soft); border-color:#e0bc77; }
+    .token.decision span { color:var(--amber); }
+    .dispatch-line { height:40px; display:flex; justify-content:center; align-items:center; }
+    .dispatch-line:before { content:""; height:21px; width:1px; background:#9bacbf; }
+    .graph-result { border:1px solid #a5d3c3; border-radius:11px; background:var(--teal-soft); color:var(--teal); padding:24px; text-align:center; }
+    .graph-result h2 { font-size:29px; margin:0 0 9px; }
+    .graph-result p { margin:0; font-size:17px; line-height:1.6; }
+    .graph-result.fallback { background:var(--amber-soft); border-color:#e0bc77; color:var(--amber); }
+    .batch-explain { display:flex; flex-direction:column; justify-content:center; gap:18px; padding:16px 2px; }
+    .batch-explain .large-step { color:#c3cedc; font-size:68px; font-weight:700; line-height:1; }
+    .batch-explain h2 { font-size:30px; line-height:1.45; margin:0; }
+    .batch-explain p { color:var(--muted); font-size:21px; line-height:1.7; margin:0; }
+    .stage-switch { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    .stage-switch button { border:1px solid var(--line); background:#fff; padding:17px 14px; border-radius:10px; text-align:left; color:var(--muted); font-size:18px; line-height:1.5; }
+    .stage-switch button span { display:block; font-size:13px; margin-bottom:5px; }
+    .stage-switch button[aria-pressed="true"] { color:var(--blue); background:var(--blue-soft); border-color:#89aef0; font-weight:650; }
+    .roadmap { display:grid; grid-template-columns:repeat(3,1fr); gap:25px; }
+    .road-step { position:relative; border-top:3px solid var(--blue); padding:26px 24px; background:var(--bg); border-radius:0 0 11px 11px; }
+    .road-step .number { font-size:50px; color:#bdcde3; font-weight:700; margin-bottom:23px; }
+    .road-step h2 { font-size:26px; margin:0 0 18px; line-height:1.4; }
+    .road-step p { font-size:20px; line-height:1.8; color:var(--muted); margin:0; }
+    .acceptance { display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--line); border-radius:11px; overflow:hidden; }
+    .acceptance div { padding:23px 25px; font-size:20px; background:#fff; }
+    .acceptance div+div { border-left:1px solid var(--line); }
+    .acceptance strong { color:var(--blue); font-size:17px; display:block; margin-bottom:8px; }
+    .footer { min-height:78px; display:flex; align-items:center; justify-content:space-between; padding:15px clamp(28px,4vw,76px); border-top:1px solid var(--line); gap:20px; background:var(--paper); }
+    .page-meta { font-size:14px; color:var(--muted); }
+    .page-meta b { color:var(--ink); margin-right:17px; font-variant-numeric:tabular-nums; }
+    .controls { display:flex; align-items:center; gap:10px; }
+    .icon-button { border:1px solid var(--line); border-radius:8px; background:white; padding:10px 14px; color:var(--ink); display:flex; align-items:center; gap:8px; font-size:15px; }
+    .icon-button:hover:not(:disabled) { border-color:var(--blue); color:var(--blue); }
+    .icon-button svg { width:17px; height:17px; stroke:currentColor; fill:none; stroke-width:1.8; }
+    dialog { border:0; padding:0; box-shadow:0 20px 100px #15283f40; border-radius:15px; color:var(--ink); }
+    dialog::backdrop { background:#0a162b66; backdrop-filter:blur(4px); }
+    .evidence-dialog { width:min(820px,calc(100vw - 40px)); max-height:85svh; }
+    .dialog-top { position:sticky; top:0; display:flex; align-items:center; justify-content:space-between; padding:22px 25px; background:white; border-bottom:1px solid var(--line); z-index:1; gap:20px; }
+    .dialog-top h2 { font-size:23px; margin:0; }
+    .dialog-content { padding:27px; }
+    .evidence-summary { margin:0 0 25px; padding:16px 19px; background:var(--blue-soft); border-radius:8px; font-size:16px; line-height:1.8; }
+    .source-label { font-size:13px; color:var(--muted); margin:0 0 18px; line-height:1.7; overflow-wrap:anywhere; }
+    details { border-top:1px solid var(--line); padding:16px 0; }
+    summary { cursor:pointer; font-size:17px; font-weight:600; line-height:1.6; }
+    .source-content { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.9; color:var(--muted); margin:18px 0 0; font-family:inherit; }
+    .source-links { padding:0; margin:20px 0 0; list-style:none; }
+    .source-links li { margin:11px 0; }
+    .source-links a { font-size:15px; color:var(--blue); line-height:1.7; }
+    .image-dialog { width:min(1460px,calc(100vw - 36px)); max-height:94svh; }
+    .original-image { width:100%; height:auto; max-height:calc(94svh - 95px); object-fit:contain; display:block; background:white; }
+    .toast { position:fixed; bottom:98px; left:50%; transform:translateX(-50%); background:var(--ink); color:white; padding:12px 18px; border-radius:9px; font-size:15px; z-index:5; }
+    @media (min-width:1800px) { .slide { padding-top:48px; gap:30px; } .route { padding:30px 34px; } .node { padding:20px; } .diagram { padding:35px; } .token { min-height:155px; } }
+    @media (max-width:1100px) { .app { grid-template-columns:160px minmax(0,1fr); } .sidebar { padding-left:12px; padding-right:10px; } .nav-item { font-size:14px; gap:9px; } .slide { padding:28px; gap:19px; } .route { padding:20px; } .node { padding:13px; } .native-services strong { font-size:19px; } .split-content { grid-template-columns:1fr 1.25fr; gap:20px; } .sdk-panel,.reuse-panel { padding:22px; } .answer-row { grid-template-columns:76px 1fr; font-size:18px; } .batch-layout { grid-template-columns:1.25fr .75fr; gap:20px; } .batch-demo { padding:20px; } .tokens { gap:9px; } .token strong { font-size:24px; } .batch-explain h2 { font-size:25px; } .batch-explain p { font-size:18px; } .roadmap { gap:16px; } .road-step { padding:22px 18px; } .road-step h2 { font-size:23px; } .road-step p { font-size:18px; } }
+    @media (max-width:760px) { .topbar { height:auto; min-height:64px; padding:13px 18px; gap:10px; } .brand { font-size:16px; } .brand span { margin-right:6px; } .date,#fullscreen { display:none; } .plain-button { font-size:14px; padding:8px 11px; } .app { display:block; min-height:calc(100svh - 64px); } .sidebar { flex-direction:row; overflow-x:auto; padding:10px 16px; gap:6px; border-right:0; border-bottom:1px solid var(--line); } .nav-label,.sidebar-note { display:none; } .nav-item { width:auto; flex-shrink:0; padding:9px 11px; font-size:14px; gap:6px; } .nav-item .num { display:none; } .slide { min-height:calc(100svh - 198px); padding:27px 20px 23px; gap:22px; } h1 { font-size:30px; letter-spacing:-.025em; } .lead { font-size:18px; } .slide-content { gap:21px; } .eyebrow { font-size:14px; flex-wrap:wrap; margin-bottom:13px; gap:9px; } .eyebrow .state { font-size:12px; } .routes,.native-lanes,.split-content,.model-pair,.batch-layout,.roadmap,.acceptance { grid-template-columns:1fr; } .route { padding:22px; } .route h2 { font-size:25px; } .route .hint { margin-bottom:17px; } .node { font-size:20px; padding:14px; } .common-result { flex-wrap:wrap; font-size:20px; gap:6px; } .native-top { font-size:18px; flex-wrap:wrap; gap:10px; padding:0 0 22px; } .native-top code { font-size:17px; } .diagram { padding:22px; } .native-services { grid-template-columns:1fr; gap:9px; } .native-services div { padding:15px; display:flex; justify-content:space-between; align-items:center; gap:10px; } .native-services strong { margin:0; } .native-services span { font-size:14px; } .model-pair { grid-template-columns:1fr 1fr; gap:12px; } .model-box { padding:23px 8px; } .model-box strong { font-size:23px; } .model-box code { font-size:14px; } .shared-engine { grid-template-columns:1fr; padding:22px; gap:18px; } .request-stack,.result-stack { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .service-row { padding:20px 10px; } .service-row strong { font-size:20px; } .service-row span { font-size:15px; } .backbone { min-height:170px; } .backbone:before,.backbone:after { display:none; } .backbone strong { font-size:33px; } .backbone span { font-size:17px; } .current-status { align-items:flex-start; flex-direction:column; gap:8px; padding:20px; font-size:17px; } .takeaway { font-size:19px; } .batch-caption { flex-wrap:wrap; gap:8px; } .tokens { gap:8px; } .token { min-height:110px; padding:16px 5px; } .token strong { font-size:23px; } .token span { font-size:14px; } .graph-result h2 { font-size:25px; } .batch-explain { gap:10px; } .batch-explain .large-step { display:none; } .stage-switch { gap:8px; } .stage-switch button { padding:13px 10px; font-size:16px; } .stage-switch button span { font-size:12px; } .road-step .number { font-size:37px; margin-bottom:15px; } .road-step { padding:22px; } .road-step h2 { font-size:25px; margin-bottom:12px; } .acceptance div+div { border-left:0; border-top:1px solid var(--line); } .slide-foot { flex-wrap:wrap; font-size:13px; gap:5px; } .footer { padding:16px 20px; gap:10px; } .page-meta { font-size:13px; } .page-meta b { margin-right:7px; } .icon-button { padding:10px; font-size:14px; } .icon-button svg { display:none; } .dialog-content { padding:20px; } .dialog-top { padding:19px 20px; } .dialog-top h2 { font-size:20px; } }
+    @media (min-width:761px) and (max-height:950px) { .slide { padding-top:28px; padding-bottom:22px; gap:20px; } h1 { font-size:clamp(30px,2.6vw,46px); } .lead { font-size:19px; margin-top:10px; line-height:1.55; } .eyebrow { margin-bottom:11px; } .slide-content { gap:20px; } .diagram { padding:20px; } .native-top { padding:16px; margin-bottom:20px; } .native-lane { padding:20px; } .native-services { margin-top:18px; } .native-services div { padding:15px 12px; } .batch-demo { padding:23px; } .batch-caption { margin-bottom:18px; } .token { min-height:112px; } .dispatch-line { height:30px; } .graph-result { padding:20px; } .stage-switch button { padding:14px 12px; } .shared-engine { padding:26px 22px; } }
+    @media (min-width:761px) and (max-height:800px) { .slide { padding-top:20px; padding-bottom:16px; gap:16px; } h1 { font-size:30px; } .lead { font-size:17px; margin-top:8px; } .eyebrow { font-size:14px; margin-bottom:8px; } .slide-content { gap:16px; } .route { padding:18px 22px; } .route h2 { font-size:23px; margin-bottom:5px; } .route .hint { font-size:15px; margin-bottom:13px; } .node { padding:11px 15px; font-size:19px; } .common-result { padding:14px; font-size:20px; } .takeaway { font-size:19px; padding-top:6px; padding-bottom:6px; } .diagram { padding:17px; } .native-top { padding:10px; margin-bottom:14px; font-size:20px; } .native-lane { padding:15px; } .native-lane h2 { font-size:21px; margin-bottom:12px; } .native-lane .engine { font-size:20px; padding:14px; } .native-lane p { font-size:16px; margin-top:11px; } .native-services { margin-top:14px; } .native-services div { padding:12px; } .native-services strong { font-size:20px; } .native-services span { font-size:14px; } .sdk-panel,.reuse-panel { padding:24px; } .sdk-panel h2,.reuse-panel h2 { font-size:23px; margin-bottom:18px; } .answer-row { font-size:19px; padding:15px 0; } .model-box { padding:20px 12px; } .reuse-core { padding:19px 14px; margin-top:18px; } .reuse-core strong { font-size:22px; } .reuse-panel .reuse-note { font-size:17px; margin-top:14px; } .shared-engine { padding:22px; } .service-row { padding:20px 14px; } .service-row strong { font-size:22px; } .service-row span { font-size:16px; } .backbone { min-height:204px; } .current-status { font-size:17px; padding:17px 22px; } .batch-demo { padding:20px; } .batch-caption { margin-bottom:16px; font-size:17px; } .token { min-height:98px; padding:16px 8px; } .token strong { font-size:25px; } .graph-result { padding:17px; } .graph-result h2 { font-size:25px; } .batch-explain h2 { font-size:26px; } .batch-explain p { font-size:18px; } .batch-explain .large-step { font-size:56px; } .stage-switch button { padding:12px; font-size:17px; } .road-step { padding:20px; } .road-step .number { font-size:40px; margin-bottom:17px; } .road-step h2 { font-size:23px; margin-bottom:12px; } .road-step p { font-size:18px; } .acceptance div { padding:18px 22px; font-size:18px; } }
+    @media (min-width:761px) and (max-height:950px) { #batch .batch-demo { padding:20px; } #batch .dispatch-line { height:24px; } }
+    @media (min-width:761px) and (max-height:800px) { #batch.slide { gap:12px; padding-bottom:14px; } #batch .slide-content { gap:12px; } #batch .batch-demo { padding:16px; } #batch .graph-result { padding:14px; } #batch .token { min-height:90px; } #batch .stage-switch button { padding:10px 12px; } .sdk-panel,.reuse-panel { padding-top:22px; padding-bottom:22px; } }
+    @media (min-width:761px) and (max-height:800px) { .performance-card { padding:24px; } .performance-card h2 { font-size:25px; } .performance-metrics { margin-top:22px; } .performance-specs div { padding:16px 18px; } }
+    @media (max-width:760px) { .performance-grid { grid-template-columns:1fr; gap:18px; } .performance-card { padding:24px 22px; } .performance-card h2 { font-size:25px; } .performance-metrics { gap:14px; } .performance-metric strong { font-size:40px; } .performance-metric small { font-size:18px; } .performance-metric span { font-size:15px; } .performance-specs { grid-template-columns:1fr; } .performance-specs div { padding:16px 20px; } .performance-specs div+div { border-left:0; border-top:1px solid var(--line); } }
+    @media (prefers-reduced-motion:no-preference) { .slide { animation:enter .22s ease-out; } @keyframes enter { from { opacity:.6; transform:translateY(7px); } to { opacity:1; transform:translateY(0); } } }
+    @media print { @page { size:A4 landscape; margin:10mm; } html,body { background:white; } .topbar,.sidebar,.footer,.slide-foot,.stage-switch,.text-button,dialog,.toast { display:none !important; } .app,main { display:block; } .slide,.slide[hidden] { display:flex !important; min-height:175mm; height:auto; padding:5mm 0; break-after:page; gap:15px; } .slide:last-child { break-after:auto; } h1 { font-size:29px; } .lead { font-size:17px; } .slide-content { gap:17px; } .node { font-size:18px; padding:13px; } .route,.diagram { padding:20px; } .takeaway { font-size:18px; } .eyebrow { font-size:13px; } .route h2 { font-size:22px; } .shared-engine { padding:22px; } .backbone { min-height:185px; } .current-status { font-size:16px; } .road-step { padding:20px; } .road-step p { font-size:17px; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span>Jev-like</span>工程能力进展</div>
+    <div class="top-actions"><span class="date">2026.10.10</span><button class="plain-button" id="evidence">依据与补充</button><button class="plain-button" id="fullscreen">全屏演示</button></div>
+  </header>
+  <div class="app">
+    <nav class="sidebar" aria-label="演示章节">
+      <p class="nav-label">ENGINEERING PROGRESS</p>
+      <button class="nav-item" data-page="0" aria-current="step"><span class="num">01</span>读出路线</button>
+      <button class="nav-item" data-page="1"><span class="num">02</span>原生服务</button>
+      <button class="nav-item" data-page="2"><span class="num">03</span>协议与复用</button>
+      <button class="nav-item" data-page="3"><span class="num">04</span>性能进展</button>
+      <button class="nav-item" data-page="4"><span class="num">05</span>D/G 共存</button>
+      <button class="nav-item" data-page="5"><span class="num">06</span>混批与图执行</button>
+      <button class="nav-item" data-page="6"><span class="num">07</span>下一阶段</button>
+      <div class="sidebar-note">← → 翻页<br>F 全屏<br>详细事实见 Markdown</div>
+    </nav>
+    <main>
+      <section class="slide" id="routes" aria-labelledby="title-routes">
+        <div class="slide-header"><p class="eyebrow">01 / 背景<span class="state">两种概率读出路线</span></p><h1 id="title-routes">差异在于候选分数从哪里来</h1><p class="lead">Kev 使用专用 Pointer Head；Plumb / JevK5 复用原生 LM head。</p></div>
+        <div class="slide-content">
+          <div class="routes">
+            <article class="route kev"><h2>Kev</h2><p class="hint">专用读出头</p><div class="pipeline"><div class="node">主干模型<small>决策位置 · 选项结束位置</small></div><div class="flow-arrow" aria-hidden="true"></div><div class="node focus">Pointer Head 匹配分数</div></div></article>
+            <article class="route lm"><h2>Plumb / JevK5</h2><p class="hint">模型自带的输出头</p><div class="pipeline"><div class="node">主干模型<small>答案起始位置的表示</small></div><div class="flow-arrow" aria-hidden="true"></div><div class="node focus">原生 LM head 的 A–P logits</div></div></article>
+          </div>
+          <div class="common-result">候选 logits → 归一化 → 概率<span>两条路线共同的输出形式</span></div>
+          <p class="takeaway">换主干时，原生答案 token 路线可使用新模型自己的输出头。</p>
+        </div>
+        <div class="slide-foot"><span>方法复用与模型质量分别评估。</span><button class="text-button" data-image="routes">查看讨论原图</button></div>
+      </section>
+      <section class="slide" id="native" aria-labelledby="title-native" hidden>
+        <div class="slide-header"><p class="eyebrow">02 / 工程进展<span class="state">已实现</span></p><h1 id="title-native">执行生命周期交给 vLLM-Ascend</h1><p class="lead">SystemOne 负责输入与答案，原生引擎负责模型执行、调度和缓存。</p></div>
+        <div class="slide-content">
+          <div class="diagram"><div class="native-top"><span>TypeSafe SDK</span><span aria-hidden="true">→</span><code>/v1/systemone</code><span aria-hidden="true">→</span><span>按模型选择执行路径</span></div><div class="native-lanes"><article class="native-lane"><h2>Kev</h2><div class="engine">原生 encode / pooling</div><p>Qwen backbone + Pointer Pooler</p></article><article class="native-lane"><h2>Plumb / 通用 Qwen</h2><div class="engine">原生 generate · 首步读出</div><p>Qwen backbone + 原生 LM head</p></article></div><div class="native-services"><div><strong>并发调度</strong><span>按 question 排队与执行</span></div><div><strong>前缀缓存</strong><span>复用公共输入</span></div><div><strong>请求生命周期</strong><span>取消、聚合与路由</span></div></div></div>
+          <p class="takeaway">已解决读出接入、文本 M-RoPE 和服务层重复管理问题。</p>
+        </div>
+        <div class="slide-foot"><span>每个实例加载自己的 checkpoint。</span><button class="text-button" data-image="native">查看完整实现图</button></div>
+      </section>
+      <section class="slide" id="reuse" aria-labelledby="title-reuse" hidden>
+        <div class="slide-header"><p class="eyebrow">03 / 能力抽象<span class="state">已实现</span></p><h1 id="title-reuse">统一协议，复用答案 token 读出</h1><p class="lead">Plumb 专用服务已扩展到结构兼容的 Qwen3.5 / Qwen3.6 文本模型。</p></div>
+        <div class="slide-content">
+          <div class="split-content"><article class="sdk-panel"><h2>TypeSafe SDK 契约</h2><div class="answer-row"><code>noul</code><span>判断概率</span></div><div class="answer-row"><code>choice</code><span>选项与分布</span></div><div class="answer-row"><code>score</code><span>评分与等级描述</span></div><p class="sdk-proof">Plumb 路线：SDK 0.7.2 真实解码回归已通过。</p></article><article class="reuse-panel"><h2>同一套读出流程</h2><div class="model-pair"><div class="model-box"><strong>Plumb-4B</strong><code>mode: plumb</code></div><div class="model-box"><strong>Qwen-27B</strong><code>mode: answer_tokens</code></div></div><div class="reuse-core"><strong>使用所加载模型自己的组件</strong><span>tokenizer · chat template · LM head</span></div><p class="reuse-note">无需额外训练 Pointer Head 即可接入。</p></article></div>
+          <p class="takeaway">变化的是模型配置；候选提取、并发聚合与 SDK 答案保持共用。</p>
+        </div>
+        <div class="slide-foot"><span>复用读出方法，质量与校准按新模型评估。</span><button class="text-button" data-source>查看实现依据</button></div>
+      </section>
+      <section class="slide" id="performance" aria-labelledby="title-performance" hidden>
+        <div class="slide-header"><p class="eyebrow">04 / 性能进展<span class="state">服务器反馈 · 约值</span></p><h1 id="title-performance">4B / 27B 的时延与并发能力</h1><p class="lead">单次 Decision 推理用时，与相应主干模型的 vLLM Prefill 用时相当。</p></div>
+        <div class="slide-content">
+          <div class="performance-grid"><article class="performance-card"><h2>Plumb-4B / Kev-4B</h2><p class="model-detail">Qwen3.5-4B 主干</p><div class="performance-metrics"><div class="performance-metric"><strong>≈300<small>ms</small></strong><span>单次 Decision 推理</span></div><div class="performance-metric"><strong>≈64</strong><span>并发服务量</span></div></div></article><article class="performance-card large"><h2>Qwen3.6-27B</h2><p class="model-detail">通用答案 token 读出</p><div class="performance-metrics"><div class="performance-metric"><strong>≈1,000<small>ms</small></strong><span>单次 Decision 推理</span></div><div class="performance-metric"><strong>≈10</strong><span>并发服务量</span></div></div></article></div>
+          <div class="performance-specs"><div><strong>4 × 910B4</strong><span>部署设备</span></div><div><strong>65,537 token</strong><span>上下文配置规格</span></div><div><strong>图编译关闭 · 投机关闭</strong><span>当前并发规格的前提</span></div></div>
+          <p class="takeaway">当前两档模型已具备明确的单次时延与并发服务能力。</p>
+        </div>
+        <div class="slide-foot"><span>单次时延与并发容量分别列示；详细口径见事实源。</span><button class="text-button" data-source>查看性能规格与口径</button></div>
+      </section>
+      <section class="slide" id="coexist" aria-labelledby="title-coexist" hidden>
+        <div class="slide-header"><p class="eyebrow">05 / 同模型服务<span class="state">功能已验证 · 服务器反馈</span></p><h1 id="title-coexist">一份 Qwen-27B，同实例服务 D 与 G</h1><p class="lead">两类请求共用 generation engine，差异在输出长度和结果读出。</p></div>
+        <div class="slide-content">
+          <div class="diagram shared-engine"><div class="request-stack"><div class="service-row"><strong>Decision</strong><span>证据 + 问题 + 候选</span></div><div class="service-row generation"><strong>Generation</strong><span>对话与生成任务</span></div></div><div class="backbone"><strong>Qwen-27B</strong><span>单份 backbone + LM head<br>同一引擎与调度器</span></div><div class="result-stack"><div class="service-row"><strong>Prefill → 候选概率</strong><span>一次结构化结果</span></div><div class="service-row generation"><strong>Prefill → Decode</strong><span>持续流式文本</span></div></div></div>
+          <div class="current-status"><strong>当前性能瓶颈</strong><span>全局 eager 配置影响 Generation；下一步恢复并保护生成的优化路径。</span></div>
+          <p class="takeaway">功能共存已可行，当前重点是让两类服务同时满足性能目标。</p>
+        </div>
+        <div class="slide-foot"><span>本页对应原生答案 token 路线。</span><button class="text-button" data-source>查看验证范围</button></div>
+      </section>
+      <section class="slide" id="batch" aria-labelledby="title-batch" hidden>
+        <div class="slide-header"><p class="eyebrow">06 / 混批影响<span class="state">启用 FULL_DECODE_ONLY 后的机制</span></p><h1 id="title-batch">D 的 prefill 会改变当步图执行条件</h1><p class="lead">同批 Generation 可能受影响；适合的 decode 批次恢复后，可再次回放图。</p></div>
+        <div class="slide-content">
+          <div class="batch-layout"><div class="batch-demo"><div class="batch-caption"><strong id="batch-caption">纯 Generation decode 批次</strong><span>Ascend · ACL Graph</span></div><div class="tokens" id="batch-tokens"><div class="token"><strong>G1</strong><span>decode</span></div><div class="token"><strong>G2</strong><span>decode</span></div><div class="token"><strong>G3</strong><span>decode</span></div><div class="token"><strong>G4</strong><span>decode</span></div></div><div class="dispatch-line" aria-hidden="true"></div><div class="graph-result" id="graph-result" role="status" aria-live="polite"><h2 id="graph-title">ACL Graph 回放</h2><p id="graph-detail">满足图分派与已捕获形状条件</p></div></div><div class="batch-explain"><div class="large-step" id="batch-number" aria-hidden="true">01</div><h2 id="batch-explain-title">纯 decode，保留图路径</h2><p id="batch-explain-text">Generation 按适合的 decode 批次执行。</p></div></div>
+          <div class="stage-switch" aria-label="切换批次阶段"><button data-stage="0" aria-pressed="true"><span>阶段 01</span>纯 G decode</button><button data-stage="1" aria-pressed="false"><span>阶段 02</span>插入 D prefill</button><button data-stage="2" aria-pressed="false"><span>阶段 03</span>恢复纯 G</button></div>
+          <p class="takeaway">服务并发可以持续；批次组织需要保护 Generation 的图路径。</p>
+        </div>
+        <div class="slide-foot"><span>机制示意，实际图命中由运行时分派决定。</span><button class="text-button" data-image="dg">查看讨论原图</button></div>
+      </section>
+      <section class="slide" id="next" aria-labelledby="title-next" hidden>
+        <div class="slide-header"><p class="eyebrow">07 / 下一阶段<span class="state">待开发与验收</span></p><h1 id="title-next">从功能共存，推进到性能共存</h1><p class="lead">先恢复 Generation，再控制 Decision 的增量开销与资源竞争。</p></div>
+        <div class="slide-content">
+          <div class="roadmap"><article class="road-step"><div class="number">01</div><h2>恢复图执行</h2><p>先验收 Generation 基线<br>再观察混批图回退</p></article><article class="road-step"><div class="number">02</div><h2>隔离读出与投机成本</h2><p>减少冗余分数处理<br>适配异步与投机路径</p></article><article class="road-step"><div class="number">03</div><h2>控制持续混合负载</h2><p>管理 prefill 与并发预算<br>比较混批与交替批次</p></article></div>
+          <div class="acceptance"><div><strong>Decision</strong>完整响应延迟 · P95 / P99</div><div><strong>Generation</strong>首字时间 · 持续输出间隔</div></div>
+          <p class="takeaway">在约定输入长度、并发与到达率下，双方同时满足可用性目标。</p>
+        </div>
+        <div class="slide-foot"><span>各阶段独立验证，逐步定位性能损失。</span><button class="text-button" data-source>查看实施与验收细节</button></div>
+      </section>
+      <footer class="footer"><div class="page-meta"><b id="page-number">01 / 07</b><span id="page-label">读出路线</span></div><div class="controls"><button class="icon-button" id="previous" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 4-6 6 6 6"/></svg>上一页</button><button class="icon-button" id="next-page">下一页<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4 6 6-6 6"/></svg></button></div></footer>
+    </main>
+  </div>
+  <dialog class="evidence-dialog" id="evidence-dialog" aria-labelledby="evidence-title"><div class="dialog-top"><h2 id="evidence-title">依据与补充</h2><button class="plain-button" data-close>关闭</button></div><div class="dialog-content"><p class="source-label" id="source-label"></p><p class="evidence-summary" id="evidence-summary"></p><div id="section-excerpts"></div><details><summary>提交与资料索引</summary><ul class="source-links" id="source-links"></ul></details><button class="text-button" id="download-source">下载完整 Markdown 事实源</button></div></dialog>
+  <dialog class="image-dialog" id="image-dialog" aria-labelledby="image-title"><div class="dialog-top"><h2 id="image-title">讨论原图</h2><button class="plain-button" data-close>关闭</button></div><div id="image-view"></div></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <template id="original-routes"><img class="original-image" src="__ROUTES_IMAGE__" alt="Kev 与 Plumb 双流程对比原图"></template>
+  <template id="original-dg"><img class="original-image" src="__DG_IMAGE__" alt="DG 同 batch 对 FULL_DECODE_ONLY 影响原图"></template>
+  <template id="original-native"><div style="padding:24px;background:#fff">__NATIVE_SVG__</div></template>
+  <script type="application/json" id="source-data">__SOURCE_JSON__</script>
+  <script>
+    (() => {
+      'use strict';
+      const slides = Array.from(document.querySelectorAll('.slide'));
+      const navigation = Array.from(document.querySelectorAll('.nav-item'));
+      const labels = ['读出路线','原生服务','协议与复用','性能进展','D/G 共存','混批与图执行','下一阶段'];
+      const source = JSON.parse(document.getElementById('source-data').textContent);
+      const evidence = [
+        { sections:['1.1','1.2'], note:'两种路线都输出候选分布。Kev 需要匹配主干的 Pointer Head；Plumb 路线使用模型原生输出头。候选数量、校准与训练细节见事实源。' },
+        { sections:['2.1','2.2'], note:'图中为按模型部署的两条适配路线。工程接入已完成；Kev 提交历史未包含 NPU 验收，本轮已有服务器运行反馈，时延与并发规格见性能进展页。' },
+        { sections:['2.3','2.4'], note:'SDK 0.7.2 真实客户端解码回归属于 Plumb 路线，通过 MockTransport 验证响应可解析，未执行真实模型；Kev 已实现对应 schema。通用模式覆盖结构兼容的 Qwen3.5 / Qwen3.6 文本模型，复用方法不代表质量或校准结果迁移。' },
+        { sections:['2.5'], note:'数据来自 2026-10-10 用户服务器反馈。共同并发条件为四卡 910B4、上下文配置 65,537 token、关闭图编译与投机。配置长度不等同各请求实际输入长度；单次时延与并发容量分别列示，尚未提供完整端到端分位数或 D/G 持续混合压测。' },
+        { sections:['2.6','3.1'], note:'Qwen-27B 同实例 D/G 功能共存来自服务器反馈。单次 Decision 约 1,000 ms，与相应模型 Prefill 用时相当，详细规格见性能进展页。当前保守启动配置影响整个实例，图、异步与投机优化尚待验收。' },
+        { sections:['3.2'], note:'本页展示恢复图模式后的分派机制，当前 eager 配置尚未获得图收益。FULL_DECODE_ONLY 图回放还受批次形态、query length 与捕获形状约束。原图的 CUDA Graph 在 Ascend 对应 ACL Graph。' },
+        { sections:['3.3','3.4'], note:'这些是下一阶段方案。当前候选读出仍使用完整 LM head 和原生 sampler；仅计算候选行、按请求隔离读出及投机兼容尚未完成。按固定负载验收两类延迟指标。' }
+      ];
+      let page = 0;
+      const evidenceDialog = document.getElementById('evidence-dialog');
+      const imageDialog = document.getElementById('image-dialog');
+      function showPage(index, moveFocus = false) {
+        page = Math.max(0,Math.min(slides.length-1,index));
+        slides.forEach((slide,i) => slide.hidden = i !== page);
+        navigation.forEach((button,i) => { if(i === page) button.setAttribute('aria-current','step'); else button.removeAttribute('aria-current'); });
+        document.getElementById('page-number').textContent = `${String(page+1).padStart(2,'0')} / ${String(slides.length).padStart(2,'0')}`;
+        document.getElementById('page-label').textContent = labels[page];
+        document.getElementById('previous').disabled = page === 0;
+        document.getElementById('next-page').disabled = page === slides.length-1;
+        history.replaceState(null,'',`#${slides[page].id}`);
+        window.scrollTo({top:0,behavior:'instant'});
+        if(moveFocus) { const title=slides[page].querySelector('h1'); title.tabIndex=-1; title.focus({preventScroll:true}); }
+      }
+      function openEvidence() {
+        document.getElementById('evidence-title').textContent = `${labels[page]} · 依据与补充`;
+        document.getElementById('source-label').textContent = `事实源：${source.source_file} · SHA-256 ${source.sha256.slice(0,12)}`;
+        document.getElementById('evidence-summary').textContent = evidence[page].note;
+        const container = document.getElementById('section-excerpts'); container.replaceChildren();
+        evidence[page].sections.forEach(prefix => {
+          const match=source.sections.find(section => section.title.startsWith(prefix+' '));
+          if(!match) return;
+          const details=document.createElement('details');
+          const summary=document.createElement('summary'); summary.textContent=`${match.title} · 源文件第 ${match.line_start} 行`;
+          const pre=document.createElement('pre'); pre.className='source-content'; pre.textContent=match.content;
+          details.append(summary,pre); container.append(details);
+        });
+        const list=document.getElementById('source-links'); list.replaceChildren();
+        source.links.forEach(link => {
+          const item=document.createElement('li'), anchor=document.createElement('a');
+          anchor.href=link.url; anchor.textContent=link.label; anchor.target='_blank'; anchor.rel='noopener noreferrer'; item.append(anchor); list.append(item);
+        });
+        evidenceDialog.showModal();
+      }
+      document.getElementById('evidence').addEventListener('click',openEvidence);
+      document.querySelectorAll('[data-source]').forEach(button=>button.addEventListener('click',openEvidence));
+      navigation.forEach(button=>button.addEventListener('click',()=>showPage(Number(button.dataset.page))));
+      document.getElementById('previous').addEventListener('click',()=>showPage(page-1));
+      document.getElementById('next-page').addEventListener('click',()=>showPage(page+1));
+      document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>button.closest('dialog').close()));
+      [evidenceDialog,imageDialog].forEach(dialog=>dialog.addEventListener('click',event=> { if(event.target === dialog && (event.clientX<dialog.getBoundingClientRect().left || event.clientX>dialog.getBoundingClientRect().right || event.clientY<dialog.getBoundingClientRect().top || event.clientY>dialog.getBoundingClientRect().bottom)) dialog.close(); }));
+      document.querySelectorAll('[data-image]').forEach(button=>button.addEventListener('click',()=> {
+        const names={routes:'Kev 与 Plumb · 讨论原图',dg:'DG 共存 · 讨论原图',native:'SystemOne · 完整实现图'};
+        document.getElementById('image-title').textContent=names[button.dataset.image];
+        const target=document.getElementById('image-view'); target.replaceChildren(document.getElementById(`original-${button.dataset.image}`).content.cloneNode(true));
+        const svg=target.querySelector('svg'); if(svg){svg.style.width='100%'; svg.style.height='auto';}
+        imageDialog.showModal();
+      }));
+      const stages=[
+        { caption:'纯 Generation decode 批次', title:'ACL Graph 回放', detail:'满足图分派与已捕获形状条件', heading:'纯 decode，保留图路径', text:'Generation 按适合的 decode 批次执行。', mixed:false },
+        { caption:'G decode + D prefill 混合批次', title:'该步可能回退到非图路径', detail:'多 token prefill 改变 uniform decode 形态', heading:'D 加入，影响同批 G', text:'Generation 这一轮与 Decision 共同执行，图路径可能回退。', mixed:true },
+        { caption:'D 完成，恢复 G decode 批次', title:'再次回放 ACL Graph', detail:'恢复图分派与已捕获形状条件', heading:'批次恢复，图路径可恢复', text:'已有执行图可在后续适合的批次中继续回放。', mixed:false }
+      ];
+      function setStage(index) {
+        const stage=stages[index];
+        document.querySelectorAll('[data-stage]').forEach(button=>button.setAttribute('aria-pressed',String(Number(button.dataset.stage)===index)));
+        document.getElementById('batch-caption').textContent=stage.caption;
+        document.getElementById('graph-title').textContent=stage.title;
+        document.getElementById('graph-detail').textContent=stage.detail;
+        document.getElementById('graph-result').classList.toggle('fallback',stage.mixed);
+        document.getElementById('batch-number').textContent=String(index+1).padStart(2,'0');
+        document.getElementById('batch-explain-title').textContent=stage.heading;
+        document.getElementById('batch-explain-text').textContent=stage.text;
+        const tokens=document.getElementById('batch-tokens'); tokens.replaceChildren();
+        const names=stage.mixed?['G1','G2','D1','G3']:['G1','G2','G3','G4'];
+        names.forEach(name=>{const token=document.createElement('div');token.className='token'+(name==='D1'?' decision':'');const strong=document.createElement('strong');strong.textContent=name;const span=document.createElement('span');span.textContent=name==='D1'?'prefill':'decode';token.append(strong,span);tokens.append(token);});
+      }
+      document.querySelectorAll('[data-stage]').forEach(button=>button.addEventListener('click',()=>setStage(Number(button.dataset.stage))));
+      async function fullscreen() {
+        try { if(document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
+        catch { const toast=document.getElementById('toast'); toast.textContent='可使用浏览器 F11 进入全屏。'; toast.hidden=false; setTimeout(()=>toast.hidden=true,4000); }
+      }
+      document.getElementById('fullscreen').addEventListener('click',fullscreen);
+      document.addEventListener('fullscreenchange',()=>document.getElementById('fullscreen').textContent=document.fullscreenElement?'退出全屏':'全屏演示');
+      document.getElementById('download-source').addEventListener('click',()=> {
+        const url=URL.createObjectURL(new Blob([source.markdown],{type:'text/markdown;charset=utf-8'}));
+        const anchor=document.createElement('a');anchor.href=url;anchor.download=source.source_file;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      });
+      document.addEventListener('keydown',event=> {
+        if(evidenceDialog.open || imageDialog.open || event.altKey || event.ctrlKey || event.metaKey) return;
+        if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+        if(event.key==='ArrowRight' || event.key==='ArrowDown' || event.key==='PageDown') {event.preventDefault();showPage(page+1);}
+        else if(event.key==='ArrowLeft' || event.key==='ArrowUp' || event.key==='PageUp') {event.preventDefault();showPage(page-1);}
+        else if(event.key==='Home') {event.preventDefault();showPage(0);}
+        else if(event.key==='End') {event.preventDefault();showPage(slides.length-1);}
+        else if(event.key.toLowerCase()==='f') {event.preventDefault();fullscreen();}
+        else if(event.key===' ' && !['BUTTON','A','SUMMARY'].includes(document.activeElement.tagName)) {event.preventDefault();showPage(page+1);}
+      });
+      const initial=slides.findIndex(slide=>`#${slide.id}`===location.hash);showPage(initial>=0?initial:0);
+      window.addEventListener('load',()=>window.scrollTo({top:0,behavior:'instant'}));
+      window.addEventListener('hashchange',()=>{const index=slides.findIndex(slide=>`#${slide.id}`===location.hash);if(index>=0)showPage(index);});
+    })();
+  </script>
+</body>
+</html>
