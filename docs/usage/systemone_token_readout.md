@@ -110,6 +110,11 @@ curl http://127.0.0.1:8010/v1/systemone \
 命中依赖完整 token 前缀及可选的 `cache_salt`；第一次同时到达的冷请求不保证只计算一次公共前缀。
 服务不增加 state 到 DP rank 的固定映射，DP 副本的缓存由各自引擎维护。
 
+阶段一新增可选的共享前缀编排：在 DP=1 和已验证的混合状态边界下，先完成一次公共前缀预填，再提交所有原始完整 prompt。
+通过 `systemone_config.shared_prefix` 配置，默认关闭；能力不足时记录原因并沿用原路径。
+配置、验证命令和当前 `pending_remote` 项见 [阶段一执行记录](../design/systemone_shared_prefix_phase1_execution.md)。
+该编排建立提交顺序；缓存留存、真实命中和时延仍须实测。
+
 当前范围为 V1 runner、BF16、原始 logprobs，关闭量化、speculative decoding 和 `enable_reduce_sample`。
 启用 prefix caching 时要求 chunked prefill 和 `mamba-cache-mode=align`。
 无需新增 entrypoint、独立读出进程或自定义 LM head。

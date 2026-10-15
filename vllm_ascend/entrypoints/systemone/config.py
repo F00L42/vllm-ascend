@@ -7,12 +7,25 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+class SharedPrefixConfig(BaseModel):
+    """Operator opt-in to an independently verified hybrid-cache boundary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = Field(default=False, strict=True)
+    # This is an assertion about the deployed runtime, not its hash granularity.
+    # Every producer ending at this interval must save all hybrid cache states.
+    verified_boundary_tokens: int | None = Field(default=None, gt=0, strict=True)
+    min_shared_tokens: int = Field(default=0, ge=0, strict=True)
+
+
 class ReadoutConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Keep existing Plumb deployments strict unless the operator opts in.
     mode: Literal["plumb", "answer_tokens"] = "plumb"
     temperature: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    shared_prefix: SharedPrefixConfig = Field(default_factory=SharedPrefixConfig)
 
     @field_validator("temperature", mode="before")
     @classmethod
