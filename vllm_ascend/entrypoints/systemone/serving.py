@@ -3,8 +3,8 @@
 """Model-native answer-token readout through vLLM generation and prefix caching."""
 
 import asyncio
+import hashlib
 import json
-import logging
 import math
 import time
 import uuid
@@ -16,6 +16,7 @@ from vllm import envs
 from vllm.entrypoints.serve.engine.serving import BaseServing
 from vllm.entrypoints.serve.utils.api_utils import load_aware_call, validate_json_request, with_cancellation
 from vllm.exceptions import VLLMNotFoundError
+from vllm.logger import logger
 from vllm.sampling_params import RequestOutputKind, SamplingParams
 from vllm.tracing import contains_trace_headers, extract_trace_headers, log_tracing_disabled_warning
 from vllm.transformers_utils.repo_utils import get_hf_file_to_dict
@@ -23,9 +24,7 @@ from vllm.utils.async_utils import make_async
 
 from .config import load_readout_config
 from .protocol import MAX_OPTIONS, SystemOneRequest, get_answer_token_ids, plan_request, probabilities, to_answers
-from .shared_prefix import inspect_shared_prefix_capability, plan_shared_prefix
-
-logger = logging.getLogger(__name__)
+from .shared_prefix import SharedPrefixPlan, inspect_shared_prefix_capability, plan_shared_prefix
 
 
 def load_temperature(model_config):
@@ -114,20 +113,40 @@ class SystemOneService:
         if not envs.VLLM_SKIP_MODEL_NAME_VALIDATION and model_name not in self.names:
             raise VLLMNotFoundError(f"Unknown served model: {model_name}")
         started = time.perf_counter()
-        plans, input_tokens, shared_plan = await self.plan_async(request)
+        plans, input_tokens, shared_plan, planning = await self.plan_async(request, time.perf_counter_ns())
         planning_ms = (time.perf_counter() - started) * 1000
-        distributions = await self._execute(plans, request, raw_request, shared_plan, planning_ms)
-        return await self.response_async(request, plans, distributions, input_tokens, started)
+        planning["planning_ms"] = round(planning_ms, 3)
+        distributions, observation = await self._execute(plans, request, raw_request, shared_plan, planning)
+        response = await self.response_async(request, plans, distributions, input_tokens, started)
+        if self.readout_config.diagnostics:
+            response["diagnostics"] = observation
+        return response
 
     def _model_name(self, request):
         return self.default_model if request.model is None else request.model
 
-    def _plan_request(self, request):
+    def _plan_request(self, request, queued_ns):
+        started_ns = time.perf_counter_ns()
         plans, input_tokens = plan_request(request, self.tokenizer, self.max_model_len)
-        shared_plan = plan_shared_prefix(
-            plans, self.shared_prefix_capability, self.readout_config.shared_prefix.min_shared_tokens
-        )
-        return plans, input_tokens, shared_plan
+        planned_ns = time.perf_counter_ns()
+        shared = self.readout_config.shared_prefix
+        if shared.strategy == "first_question":
+            # This strategy uses a complete original question. It does not scan
+            # an LCP or apply producer-only min_shared_tokens.
+            reason = "single_question" if len(plans) == 1 else self.shared_prefix_capability.reason
+            if len(plans) > 1 and reason == "ready":
+                reason = "first_question_ready"
+            shared_plan = SharedPrefixPlan(0, 0, reason)
+            lcp_ms = 0.0
+        else:
+            shared_plan = plan_shared_prefix(plans, self.shared_prefix_capability, shared.min_shared_tokens)
+            lcp_ms = (time.perf_counter_ns() - planned_ns) / 1_000_000
+        planning = {
+            "executor_queue_ms": round((started_ns - queued_ns) / 1_000_000, 3),
+            "plan_request_ms": round((planned_ns - started_ns) / 1_000_000, 3),
+            "lcp_ms": round(lcp_ms, 3),
+        }
+        return plans, input_tokens, shared_plan, planning
 
     def _build_response(self, request, plans, distributions, input_tokens, started):
         return {
@@ -137,7 +156,7 @@ class SystemOneService:
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         }
 
-    async def _execute(self, plans, request, raw_request, shared_plan, planning_ms):
+    async def _execute(self, plans, request, raw_request, shared_plan, planning):
         parent_request_id = BaseServing._base_request_id(raw_request)
         # Public abort uses external IDs. Do not let repeated client headers
         # make separate parent groups share an abort identity.
@@ -149,37 +168,84 @@ class SystemOneService:
             else:
                 log_tracing_disabled_warning()
 
+        first_question = shared_plan.reason == "first_question_ready"
+        strategy = "first_question" if first_question else "producer" if shared_plan.prefill_tokens else "direct"
         observation = {
             "request_id": parent,
             "parent_request_id": parent_request_id,
+            "strategy": strategy,
+            "configured_strategy": self.readout_config.shared_prefix.strategy
+            if self.readout_config.shared_prefix.enabled
+            else "direct",
             "reason": shared_plan.reason,
             "questions": len(plans),
             "common_tokens": shared_plan.common_tokens,
             "prefill_tokens": shared_plan.prefill_tokens,
             "prompt_tokens": [len(plan.token_ids) for plan in plans],
             "unshared_common_tokens": shared_plan.common_tokens - shared_plan.prefill_tokens,
-            "planning_ms": round(planning_ms, 3),
+            **planning,
             "prefill_ms": None,
+            "first_question_ms": None,
             "branch_ms": None,
             "prefill_cached_tokens": None,
             "branch_cached_tokens": [None] * len(plans),
             "reuse": "not_attempted",
             "status": "failed",
         }
+        details = None
+        producer = None
+        if self.readout_config.diagnostics:
+            details = [
+                {
+                    **self._request_observation(f"{parent}-{index}", len(plan.token_ids)),
+                    "index": index,
+                    "question_id": plan.question_id,
+                    "probabilities": None,
+                }
+                for index, plan in enumerate(plans)
+            ]
+            if shared_plan.prefill_tokens:
+                producer = self._request_observation(f"{parent}-prefill", shared_plan.prefill_tokens)
+            observation.update(
+                schema_version=1,
+                runtime=self.runtime_observation(),
+                cache_salt_sha256=hashlib.sha256(request.cache_salt.encode("utf-8")).hexdigest()
+                if request.cache_salt is not None
+                else None,
+                question_details=details,
+                producer=producer,
+            )
         try:
             if shared_plan.prefill_tokens:
                 prefill_started = time.perf_counter()
                 try:
                     observation["prefill_cached_tokens"] = await self._prefill(
-                        plans[0].token_ids[: shared_plan.prefill_tokens], request, parent, trace_headers
+                        plans[0].token_ids[: shared_plan.prefill_tokens], request, parent, trace_headers, producer
                     )
                 finally:
                     observation["prefill_ms"] = round((time.perf_counter() - prefill_started) * 1000, 3)
+            first_result = None
+            if first_question:
+                first_started = time.perf_counter()
+                try:
+                    first_result = await self._consume_question(
+                        0, plans[0], request, parent, trace_headers, observation["branch_cached_tokens"], details
+                    )
+                finally:
+                    observation["first_question_ms"] = round((time.perf_counter() - first_started) * 1000, 3)
             branch_started = time.perf_counter()
             try:
                 results = await self._execute_questions(
-                    plans, request, parent, trace_headers, observation["branch_cached_tokens"]
+                    plans,
+                    request,
+                    parent,
+                    trace_headers,
+                    observation["branch_cached_tokens"],
+                    details,
+                    start_index=1 if first_question else 0,
                 )
+                if first_question:
+                    results.insert(0, first_result)
             finally:
                 observation["branch_ms"] = round((time.perf_counter() - branch_started) * 1000, 3)
             if shared_plan.prefill_tokens:
@@ -190,8 +256,16 @@ class SystemOneService:
                     observation["reuse"] = "unavailable"
                 else:
                     observation["reuse"] = "reported_sufficient"
+            elif first_question:
+                # With no LCP scan there is no expected hit count to compare.
+                # These are observations, not proof of complete hybrid reuse.
+                observation["reuse"] = (
+                    "unavailable"
+                    if any(count is None for count in observation["branch_cached_tokens"][1:])
+                    else "reported"
+                )
             observation["status"] = "completed"
-            return results
+            return results, observation
         except asyncio.CancelledError:
             observation["status"] = "cancelled"
             raise
@@ -212,12 +286,34 @@ class SystemOneService:
             trace_headers=trace_headers,
         )
 
+    @staticmethod
+    def _request_observation(request_id, prompt_tokens):
+        return {
+            # Public generate/abort ID, also used for correlation in engine logs.
+            "engine_request_id": request_id,
+            "output_request_id": None,
+            "prompt_tokens": prompt_tokens,
+            "submit_monotonic_ns": None,
+            "submit_wall_ns": None,
+            "complete_monotonic_ns": None,
+            "complete_wall_ns": None,
+            "cached_tokens": None,
+            "status": "not_submitted",
+        }
+
     @asynccontextmanager
-    async def _request_stream(self, token_ids, params, request, request_id, trace_headers):
+    async def _request_stream(self, token_ids, params, request, request_id, trace_headers, observation=None):
+        if observation is not None:
+            # Endpoint boundaries, not engine admission or scheduler timestamps.
+            observation["submit_monotonic_ns"] = time.monotonic_ns()
+            observation["submit_wall_ns"] = time.time_ns()
+            observation["status"] = "submitted"
         try:
             async with aclosing(self._generate(token_ids, params, request, request_id, trace_headers)) as generator:
                 yield generator
-        except BaseException:
+        except BaseException as exc:
+            if observation is not None:
+                observation["status"] = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
             # Native generate may be cancelled after local registration but
             # before add_request returns its collector. Close alone cannot
             # abort that window in vLLM 0.27.1; public abort resolves the ID.
@@ -226,8 +322,15 @@ class SystemOneService:
             except Exception:
                 logger.exception("SystemOne could not abort unfinished request %s", request_id)
             raise
+        else:
+            if observation is not None:
+                observation["status"] = "completed"
+        finally:
+            if observation is not None:
+                observation["complete_monotonic_ns"] = time.monotonic_ns()
+                observation["complete_wall_ns"] = time.time_ns()
 
-    async def _prefill(self, token_ids, request, parent, trace_headers):
+    async def _prefill(self, token_ids, request, parent, trace_headers, observation=None):
         params = SamplingParams(
             temperature=0,
             max_tokens=1,
@@ -237,7 +340,9 @@ class SystemOneService:
         )
         finished = False
         cached_tokens = None
-        async with self._request_stream(token_ids, params, request, f"{parent}-prefill", trace_headers) as generator:
+        async with self._request_stream(
+            token_ids, params, request, f"{parent}-prefill", trace_headers, observation
+        ) as generator:
             async for output in generator:
                 if output.finished:
                     if (
@@ -248,11 +353,15 @@ class SystemOneService:
                         raise RuntimeError("SystemOne shared-prefix prefill did not complete normally")
                     finished = True
                     cached_tokens = getattr(output, "num_cached_tokens", None)
+                    if observation is not None:
+                        observation["output_request_id"] = getattr(output, "request_id", None)
+                        observation["cached_tokens"] = cached_tokens
             if not finished:
                 raise RuntimeError("SystemOne shared-prefix prefill ended without a finished result")
         return cached_tokens
 
-    async def _consume_question(self, index, plan, request, parent, trace_headers, cached_tokens):
+    async def _consume_question(self, index, plan, request, parent, trace_headers, cached_tokens, details=None):
+        observation = details[index] if details is not None else None
         params = SamplingParams(
             temperature=0,
             max_tokens=1,
@@ -264,22 +373,31 @@ class SystemOneService:
         )
         result = None
         async with self._request_stream(
-            plan.token_ids, params, request, f"{parent}-{index}", trace_headers
+            plan.token_ids, params, request, f"{parent}-{index}", trace_headers, observation
         ) as generator:
             async for output in generator:
                 if output.finished:
                     cached_tokens[index] = getattr(output, "num_cached_tokens", None)
                     result = extract_probabilities(output, plan, self.temperature)
+                    if observation is not None:
+                        observation["output_request_id"] = getattr(output, "request_id", None)
+                        observation["cached_tokens"] = cached_tokens[index]
+                        observation["probabilities"] = result
             if result is None:
                 raise RuntimeError("SystemOne did not receive results for all questions")
         return result
 
-    async def _execute_questions(self, plans, request, parent, trace_headers, cached_tokens):
+    async def _execute_questions(
+        self, plans, request, parent, trace_headers, cached_tokens, details=None, start_index=0
+    ):
         # Each task owns and closes its native generator. Cancel and await every
         # sibling before returning so native abort completes on failure/cancel.
         tasks = [
-            asyncio.create_task(self._consume_question(index, plan, request, parent, trace_headers, cached_tokens))
+            asyncio.create_task(
+                self._consume_question(index, plan, request, parent, trace_headers, cached_tokens, details)
+            )
             for index, plan in enumerate(plans)
+            if index >= start_index
         ]
         try:
             # as_completed does not cancel children when its consumer is
@@ -292,6 +410,61 @@ class SystemOneService:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def runtime_observation(self):
+        config = self.engine.vllm_config
+        cache = config.cache_config
+        scheduler = config.scheduler_config
+        model = config.model_config
+        parallel = getattr(config, "parallel_config", None)
+        shared = self.readout_config.shared_prefix
+        return {
+            "schema_version": 1,
+            "model": self.default_model,
+            "model_path": model.model,
+            "model_revision": getattr(model.hf_config, "_commit_hash", None) or model.revision,
+            "dtype": str(model.dtype) if getattr(model, "dtype", None) is not None else None,
+            "enforce_eager": getattr(model, "enforce_eager", None),
+            "use_v2_model_runner": config.use_v2_model_runner,
+            "mode": self.readout_config.mode,
+            "temperature": self.temperature,
+            "max_prompt_tokens": self.max_model_len - 1,
+            "diagnostics": self.readout_config.diagnostics,
+            "shared_prefix": {
+                **shared.model_dump(),
+                "capability_reason": self.shared_prefix_capability.reason,
+                "min_shared_tokens_applies": shared.strategy == "producer",
+            },
+            "cache": {
+                field: getattr(cache, field, None)
+                for field in (
+                    "enable_prefix_caching",
+                    "mamba_cache_mode",
+                    "block_size",
+                    "mamba_block_size",
+                    "prefix_match_unit",
+                    "num_gpu_blocks",
+                    "cache_dtype",
+                )
+            },
+            "scheduler": {
+                field: getattr(scheduler, field, None)
+                for field in (
+                    "enable_chunked_prefill",
+                    "async_scheduling",
+                    "max_num_batched_tokens",
+                    "max_num_seqs",
+                    "max_num_partial_prefills",
+                    "max_long_partial_prefills",
+                    "long_prefill_token_threshold",
+                )
+            },
+            "parallel": {
+                field: getattr(parallel, field, None)
+                for field in ("tensor_parallel_size", "pipeline_parallel_size", "data_parallel_size")
+            },
+            "prefix_cache_retention_interval": getattr(envs, "VLLM_PREFIX_CACHE_RETENTION_INTERVAL", None),
+        }
 
 
 class SystemOnePlugin:
@@ -312,22 +485,4 @@ class SystemOnePlugin:
         state.systemone_service = None
         if engine_client is not None:
             state.systemone_service = SystemOneService(engine_client)
-            logger.info(
-                "SystemOne endpoint /v1/systemone initialized: model=%s, mode=%s, temperature=%s, "
-                "max_prompt_tokens=%d, prefix_caching=%s, shared_prefix=%s",
-                state.systemone_service.default_model,
-                state.systemone_service.readout_config.mode,
-                state.systemone_service.temperature,
-                state.systemone_service.max_model_len - 1,
-                engine_client.vllm_config.cache_config.enable_prefix_caching,
-                state.systemone_service.shared_prefix_capability,
-            )
-            cache = engine_client.vllm_config.cache_config
-            logger.info(
-                "SystemOne shared_prefix runtime: block_size=%s, mamba_block_size=%s, prefix_match_unit=%s, "
-                "retention_interval=%s",
-                getattr(cache, "block_size", None),
-                getattr(cache, "mamba_block_size", None),
-                getattr(cache, "prefix_match_unit", None),
-                getattr(envs, "VLLM_PREFIX_CACHE_RETENTION_INTERVAL", None),
-            )
+            logger.info("SystemOne runtime %s", json.dumps(state.systemone_service.runtime_observation()))

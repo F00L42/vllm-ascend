@@ -115,6 +115,11 @@ curl http://127.0.0.1:8010/v1/systemone \
 配置、验证命令和当前 `pending_remote` 项见 [阶段一执行记录](../design/systemone_shared_prefix_phase1_execution.md)。
 该编排建立提交顺序；缓存留存、真实命中和时延仍须实测。
 
+下一轮原生 APC 观察、salt 隔离及三种策略的可执行脚本见
+[APC 实验方案](../design/systemone_apc_next_experiment.md)。
+其中 `shared_prefix.strategy="first_question"` 在启用并通过能力检查时先完成首题，再执行其余题；默认策略仍为 `producer`。
+`systemone_config.diagnostics=true` 显式增加响应 `diagnostics` 字段，提供完整候选概率、运行配置、逐题缓存和时序；默认关闭。
+
 当前范围为 V1 runner、BF16、原始 logprobs，关闭量化、speculative decoding 和 `enable_reduce_sample`。
 启用 prefix caching 时要求 chunked prefill 和 `mamba-cache-mode=align`。
 无需新增 entrypoint、独立读出进程或自定义 LM head。

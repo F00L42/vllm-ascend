@@ -25,6 +25,8 @@ def test_missing_namespace_preserves_strict_plumb_mode(additional):
     assert config.mode == "plumb"
     assert config.temperature is None
     assert config.shared_prefix.enabled is False
+    assert config.shared_prefix.strategy == "producer"
+    assert config.diagnostics is False
     assert config.shared_prefix.verified_boundary_tokens is None
     assert config.shared_prefix.min_shared_tokens == 0
 
@@ -105,3 +107,22 @@ def test_minimum_shared_tokens_requires_a_nonnegative_integer(minimum):
 def test_shared_prefix_unknown_or_invalid_fields_fail_closed(raw):
     with pytest.raises(ValidationError):
         _CONFIG.ReadoutConfig(shared_prefix=raw)
+
+
+@pytest.mark.parametrize("strategy", ["producer", "first_question"])
+def test_shared_prefix_strategy_is_explicit_and_preserves_existing_config(strategy):
+    config = _CONFIG.ReadoutConfig(diagnostics=True, shared_prefix={"enabled": True, "strategy": strategy})
+    assert config.diagnostics is True
+    assert config.shared_prefix.strategy == strategy
+
+
+@pytest.mark.parametrize("strategy", [None, "direct", "first", True])
+def test_unknown_strategy_is_rejected(strategy):
+    with pytest.raises(ValidationError):
+        _CONFIG.SharedPrefixConfig(strategy=strategy)
+
+
+@pytest.mark.parametrize("diagnostics", [0, 1, "true", None])
+def test_diagnostics_requires_explicit_boolean(diagnostics):
+    with pytest.raises(ValidationError):
+        _CONFIG.ReadoutConfig(diagnostics=diagnostics)

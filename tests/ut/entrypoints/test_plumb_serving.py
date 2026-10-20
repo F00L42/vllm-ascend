@@ -7,9 +7,12 @@ import asyncio
 import contextlib
 import functools
 import importlib.util
+import io
 import json
+import logging
 import math
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -92,6 +95,7 @@ def serving(monkeypatch):
 
     module = ModuleType("plumb_serving_cpu")
     module.__dict__.update(
+        logger=logging.getLogger("vllm"),
         envs=SimpleNamespace(VLLM_SKIP_MODEL_NAME_VALIDATION=False, VLLM_PREFIX_CACHE_RETENTION_INTERVAL=None),
         BaseServing=SimpleNamespace(_base_request_id=lambda raw: raw.headers["X-Request-Id"]),
         load_aware_call=lambda function: function,
@@ -343,13 +347,39 @@ class _SharedEngine(_Engine):
                 output.outputs[0].logprobs[0].pop(candidates[0])
             if self.cache_report != "unavailable":
                 output.num_cached_tokens = (
-                    len(self.calls[0]["prompt"]["prompt_token_ids"]) if self.cache_report == "sufficient" else 0
+                    min(len(self.calls[0]["prompt"]["prompt_token_ids"]), len(call["prompt"]["prompt_token_ids"]))
+                    if self.cache_report == "sufficient"
+                    else 0
                 )
             yield output
         finally:
             self.events.append(("closed", label))
             self.cleaned.add(index)
             self.clean_events[index].set()
+
+
+class _FirstQuestionEngine(_SharedEngine):
+    def __init__(self, executor, *, first_cleanup_block=False, **kwargs):
+        super().__init__(executor, **kwargs)
+        self.vllm_config.additional_config["systemone_config"]["shared_prefix"]["strategy"] = "first_question"
+        self.branch_count = 1
+        self.first_cleanup_block = first_cleanup_block
+        self.first_cleanup_started = asyncio.Event()
+        self.first_cleanup_release = asyncio.Event()
+
+    async def _produce(self, label, call):
+        try:
+            async with contextlib.aclosing(super()._produce(label, call)) as generator:
+                async for output in generator:
+                    output.request_id = call["request_id"]
+                    yield output
+            if label == "0" and self.branch_behavior == "raise-after-finished":
+                raise RuntimeError("injected first-question failure after finished")
+        finally:
+            if label == "0":
+                self.first_cleanup_started.set()
+                if self.first_cleanup_block:
+                    await self.first_cleanup_release.wait()
 
 
 class _RegistrationEngine(_SharedEngine):
@@ -502,7 +532,7 @@ def test_concurrent_native_requests_preserve_prefix_and_restore_answer_order(ser
 @pytest.mark.parametrize("generic", [False, True], ids=["plumb", "answer-tokens"])
 @pytest.mark.parametrize("cache_salt", [None, "tenant-prefix"])
 def test_shared_prefill_preserves_native_prompts_readout_and_usage(serving, generic, cache_salt, caplog):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _SharedEngine(executor, generic=generic)
@@ -584,7 +614,7 @@ def test_shared_prefill_must_finish_generator_cleanup_before_creating_branches(s
     "behavior", ["raise", "empty", "unfinished", "error", "abort", "empty-token", "raise-after-finished"]
 )
 def test_shared_prefill_failure_or_missing_completion_never_starts_branches(serving, behavior, caplog):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _SharedEngine(executor, prefill_behavior=behavior)
@@ -604,7 +634,7 @@ def test_shared_prefill_failure_or_missing_completion_never_starts_branches(serv
 
 
 def test_parent_cancellation_closes_active_prefill_without_starting_branches(serving, caplog):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _SharedEngine(executor, prefill_block=True)
@@ -650,7 +680,7 @@ def test_registration_window_cancellation_uses_public_abort_to_release_requests(
 
 
 def test_repeated_client_request_ids_keep_concurrent_parent_abort_isolated(serving, caplog):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _RegistrationEngine(executor, phase="prefill")
@@ -787,7 +817,7 @@ def test_shared_branches_are_all_closed_before_failure_or_cancellation_returns(s
 def test_shared_cache_miss_or_missing_metrics_returns_answers_without_retry(
     serving, cache_report, expected_reuse, expected_counts, caplog
 ):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _SharedEngine(executor, cache_report=cache_report)
@@ -814,7 +844,7 @@ def test_shared_cache_miss_or_missing_metrics_returns_answers_without_retry(
     ],
 )
 def test_shared_prefill_fallback_executes_original_branches(serving, fallback, expected_reason, caplog):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _SharedEngine(executor)
@@ -847,7 +877,7 @@ def test_shared_prefill_fallback_executes_original_branches(serving, fallback, e
 
 
 def test_shared_prefill_single_question_uses_only_its_original_prompt(serving, caplog):
-    caplog.set_level("INFO", logger="plumb_serving_cpu")
+    caplog.set_level("INFO", logger="vllm")
 
     async def run(executor):
         engine = _SharedEngine(executor)
@@ -1098,3 +1128,305 @@ def test_typesafe_sdk_decodes_all_answer_types(serving, criteria, generic):
     assert raw["answers"]["urgency"]["legend"] == {str(index): level for index, level in enumerate(criteria)}
     assert result.usage.input_tokens == raw["usage"]["input_tokens"] > 0
     assert result.usage.output_tokens == 0
+
+
+def test_first_question_keeps_first_answer_and_starts_remaining_after_cleanup(serving, monkeypatch, caplog):
+    caplog.set_level("INFO", logger="vllm")
+
+    def unexpected_lcp(*args):
+        raise AssertionError("first_question must not scan an LCP")
+
+    monkeypatch.setattr(serving, "plan_shared_prefix", unexpected_lcp)
+
+    async def run(executor):
+        engine = _FirstQuestionEngine(executor, first_cleanup_block=True)
+        # A producer-only threshold cannot suppress first_question scheduling.
+        engine.vllm_config.additional_config["systemone_config"]["shared_prefix"]["min_shared_tokens"] = 65536
+        service = serving.SystemOneService(engine)
+        request = _request(serving)
+        plans, tokens = serving.plan_request(request, service.tokenizer, service.max_model_len)
+        task = asyncio.create_task(service.evaluate(request, _raw_request()))
+        await asyncio.wait_for(engine.first_cleanup_started.wait(), timeout=2)
+        assert len(engine.calls) == 1
+        assert engine.completed == [0]
+        engine.first_cleanup_release.set()
+        result = await asyncio.wait_for(task, timeout=2)
+        assert len(engine.calls) == 2
+        assert not engine.prefill_started.is_set()
+        assert engine.completed == [0, 1]
+        assert list(result["answers"]) == ["first", "second"]
+        assert result["answers"]["first"]["noul"] == pytest.approx(1 / (1 + math.exp(-1)))
+        assert result["answers"]["second"]["choice"] == "blue"
+        assert result["usage"] == {"input_tokens": tokens, "output_tokens": 0}
+        assert set(result) == {"model", "answers", "usage", "latency_ms"}
+        for index, call in enumerate(engine.calls):
+            assert call["prompt"] == {"prompt_token_ids": plans[index].token_ids, "cache_salt": request.cache_salt}
+            assert call["sampling_params"].logprob_token_ids == plans[index].candidate_token_ids
+            assert call["priority"] == request.priority
+            assert call["trace_headers"] == {"traceparent": "trace-id"}
+        observation = _shared_observations(caplog)[-1]
+        assert observation["strategy"] == "first_question"
+        assert observation["reason"] == "first_question_ready"
+        assert observation["common_tokens"] == observation["prefill_tokens"] == 0
+        assert observation["lcp_ms"] == 0
+        assert observation["first_question_ms"] >= 0
+        assert observation["reuse"] == "reported"
+        assert "question_details" not in observation
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+@pytest.mark.parametrize(
+    "behavior", ["raise", "unfinished", "missing-candidate", "raise-after-finished", "cancel", "cancel-cleanup"]
+)
+def test_first_question_failure_and_cancellation_never_submit_followers(serving, behavior, caplog):
+    caplog.set_level("INFO", logger="vllm")
+
+    async def run(executor):
+        engine = _FirstQuestionEngine(
+            executor,
+            fail=behavior == "raise",
+            block=behavior == "cancel",
+            first_cleanup_block=behavior == "cancel-cleanup",
+        )
+        engine.branch_behavior = behavior
+        engine.vllm_config.additional_config["systemone_config"]["diagnostics"] = True
+        service = serving.SystemOneService(engine)
+        task = asyncio.create_task(service.evaluate(_request(serving), _raw_request()))
+        if behavior.startswith("cancel"):
+            event = engine.first_cleanup_started if behavior == "cancel-cleanup" else engine.all_started
+            await asyncio.wait_for(event.wait(), timeout=2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(RuntimeError):
+                await asyncio.wait_for(task, timeout=2)
+        assert len(engine.calls) == 1
+        assert engine.cleaned == {0}
+        assert engine.aborted == [engine.calls[0]["request_id"]]
+        observation = _shared_observations(caplog)[-1]
+        assert observation["status"] == ("cancelled" if behavior.startswith("cancel") else "failed")
+        assert observation["question_details"][0]["status"] == observation["status"]
+        assert observation["question_details"][1]["status"] == "not_submitted"
+        assert observation["question_details"][1]["submit_monotonic_ns"] is None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+@pytest.mark.parametrize("guard", ["disabled", "apc", "dp", "single"])
+def test_first_question_respects_capability_guards_and_single_question(serving, guard, monkeypatch, caplog):
+    caplog.set_level("INFO", logger="vllm")
+
+    def unexpected_lcp(*args):
+        raise AssertionError("first_question fallback must not scan an LCP")
+
+    monkeypatch.setattr(serving, "plan_shared_prefix", unexpected_lcp)
+
+    async def run(executor):
+        engine = _SharedEngine(executor)
+        settings = engine.vllm_config.additional_config["systemone_config"]["shared_prefix"]
+        settings["strategy"] = "first_question"
+        request = _request(serving)
+        if guard == "disabled":
+            settings["enabled"] = False
+        elif guard == "apc":
+            engine.vllm_config.cache_config.enable_prefix_caching = False
+        elif guard == "dp":
+            engine.vllm_config.parallel_config.data_parallel_size = 2
+        else:
+            request.questions.pop("second")
+            engine.branch_count = 1
+        result = await asyncio.wait_for(serving.SystemOneService(engine).evaluate(request, _raw_request()), timeout=2)
+        assert len(engine.calls) == len(request.questions)
+        assert len(result["answers"]) == len(request.questions)
+        assert not engine.prefill_started.is_set()
+        observation = _shared_observations(caplog)[-1]
+        assert observation["strategy"] == "direct"
+        assert observation["configured_strategy"] == ("direct" if guard == "disabled" else "first_question")
+        assert observation["first_question_ms"] is None
+        if guard != "single":
+            assert engine.completed == [1, 0]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+@pytest.mark.parametrize("strategy", ["direct", "producer", "first_question"])
+@pytest.mark.parametrize("cache_report", ["sufficient", "unavailable"])
+def test_diagnostics_capture_native_ids_unrounded_probabilities_and_endpoint_times(
+    serving, strategy, cache_report, caplog
+):
+    caplog.set_level("INFO", logger="vllm")
+
+    async def run(executor):
+        engine_type = _FirstQuestionEngine if strategy == "first_question" else _SharedEngine
+        engine = engine_type(executor, cache_report=cache_report)
+        config = engine.vllm_config.additional_config["systemone_config"]
+        config["diagnostics"] = True
+        if strategy == "direct":
+            config["shared_prefix"]["enabled"] = False
+        request = _request(serving)
+        result = await asyncio.wait_for(serving.SystemOneService(engine).evaluate(request, _raw_request()), timeout=2)
+        diagnostic = result["diagnostics"]
+        assert diagnostic == _shared_observations(caplog)[-1]
+        assert diagnostic["schema_version"] == 1
+        assert diagnostic["strategy"] == strategy
+        assert diagnostic["configured_strategy"] == strategy
+        assert diagnostic["runtime"]["cache"]["block_size"] == 64
+        assert diagnostic["runtime"]["shared_prefix"]["min_shared_tokens_applies"] == (strategy != "first_question")
+        assert diagnostic["parent_request_id"] == "request-id"
+        assert diagnostic["cache_salt_sha256"] == serving.hashlib.sha256(request.cache_salt.encode()).hexdigest()
+        assert request.cache_salt not in json.dumps(diagnostic)
+        assert [item["question_id"] for item in diagnostic["question_details"]] == ["first", "second"]
+        branches = [call for call in engine.calls if not call["request_id"].endswith("-prefill")]
+        for index, detail in enumerate(diagnostic["question_details"]):
+            assert detail["engine_request_id"] == branches[index]["request_id"]
+            assert detail["prompt_tokens"] == len(branches[index]["prompt"]["prompt_token_ids"])
+            assert detail["status"] == "completed"
+            assert detail["complete_monotonic_ns"] >= detail["submit_monotonic_ns"] > 0
+            assert detail["complete_wall_ns"] >= detail["submit_wall_ns"] > 0
+            assert sum(detail["probabilities"]) == pytest.approx(1.0)
+            if strategy == "first_question":
+                assert detail["output_request_id"] == detail["engine_request_id"]
+            else:
+                assert detail["output_request_id"] is None
+            if cache_report == "unavailable":
+                assert detail["cached_tokens"] is None
+            else:
+                assert detail["cached_tokens"] == diagnostic["branch_cached_tokens"][index]
+        first, second = diagnostic["question_details"]
+        assert first["probabilities"][0] == result["answers"]["first"]["noul"]
+        assert first["probabilities"][0] != round(first["probabilities"][0], 6)
+        if strategy == "first_question":
+            assert first["complete_monotonic_ns"] <= second["submit_monotonic_ns"]
+        elif strategy == "producer":
+            producer = diagnostic["producer"]
+            assert producer["prompt_tokens"] == diagnostic["prefill_tokens"]
+            assert producer["cached_tokens"] == diagnostic["prefill_cached_tokens"]
+            assert producer["complete_monotonic_ns"] <= first["submit_monotonic_ns"]
+        else:
+            assert diagnostic["producer"] is None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
+
+
+def test_planning_reports_executor_wait_separately_from_tokenization_and_lcp(serving):
+    async def run(executor):
+        engine = _SharedEngine(executor)
+        engine.vllm_config.additional_config["systemone_config"]["diagnostics"] = True
+        service = serving.SystemOneService(engine)
+        release = threading.Event()
+        occupied = threading.Event()
+
+        def occupy_worker():
+            occupied.set()
+            release.wait(timeout=2)
+
+        blocker = executor.submit(occupy_worker)
+        assert occupied.wait(timeout=2)
+        task = asyncio.create_task(service.evaluate(_request(serving), _raw_request()))
+        asyncio.get_running_loop().call_later(0.05, release.set)
+        try:
+            result = await asyncio.wait_for(task, timeout=2)
+        finally:
+            release.set()
+            blocker.result(timeout=2)
+        diagnostic = result["diagnostics"]
+        assert diagnostic["executor_queue_ms"] >= 30
+        assert diagnostic["plan_request_ms"] > 0
+        assert diagnostic["lcp_ms"] > 0
+        assert diagnostic["planning_ms"] + 0.01 >= sum(
+            diagnostic[field] for field in ("executor_queue_ms", "plan_request_ms", "lcp_ms")
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        asyncio.run(run(executor))
+
+
+def test_runtime_and_parent_info_logs_use_vllm_handler_with_warning_root(serving, monkeypatch):
+    # vLLM configures its own namespace, not the root or vllm_ascend logger.
+    # Exercise real Python logging with that layout, not a logger mock/spy.
+    imports = ast.parse((_SOURCE_DIR / "serving.py").read_text(encoding="utf-8")).body
+    assert any(
+        isinstance(node, ast.ImportFrom) and node.module == "vllm.logger" and node.names[0].name == "logger"
+        for node in imports
+    )
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    monkeypatch.setattr(serving.logger, "handlers", [handler])
+    monkeypatch.setattr(serving.logger, "propagate", False)
+    previous_root_level = logging.getLogger().level
+    previous_level = serving.logger.level
+    logging.getLogger().setLevel(logging.WARNING)
+    serving.logger.setLevel(logging.INFO)
+
+    async def run(executor):
+        engine = _SharedEngine(executor)
+        engine.vllm_config.cache_config.prefix_match_unit = 64
+        engine.vllm_config.scheduler_config.max_num_batched_tokens = 4096
+        engine.vllm_config.scheduler_config.max_num_seqs = 20
+        state = SimpleNamespace()
+        await serving.SystemOnePlugin().init_state(engine, state, None)
+        await asyncio.wait_for(state.systemone_service.evaluate(_request(serving), _raw_request()), timeout=2)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            asyncio.run(run(executor))
+    finally:
+        logging.getLogger().setLevel(previous_root_level)
+        serving.logger.setLevel(previous_level)
+    messages = stream.getvalue().splitlines()
+    runtime = json.loads(
+        next(message.removeprefix("SystemOne runtime ") for message in messages if "runtime " in message)
+    )
+    assert runtime["cache"]["block_size"] == runtime["cache"]["prefix_match_unit"] == 64
+    assert runtime["scheduler"]["max_num_batched_tokens"] == 4096
+    assert runtime["scheduler"]["max_num_seqs"] == 20
+    assert runtime["shared_prefix"]["strategy"] == "producer"
+    assert runtime["shared_prefix"]["capability_reason"] == "ready"
+    assert any(message.startswith("SystemOne shared_prefix ") for message in messages)
+
+
+@pytest.mark.parametrize("strategy", ["direct", "producer", "first_question"])
+@pytest.mark.parametrize("single_question", [False, True], ids=["multiple-questions", "single-question"])
+def test_service_diagnostics_satisfy_experiment_driver_contract(serving, strategy, single_question):
+    source = _SOURCE_DIR.parents[2] / "benchmarks/scripts/benchmark_systemone_apc.py"
+    spec = importlib.util.spec_from_file_location("systemone_apc_service_contract", source)
+    assert spec is not None and spec.loader is not None
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+
+    async def run(executor):
+        engine_type = _FirstQuestionEngine if strategy == "first_question" else _SharedEngine
+        engine = engine_type(executor)
+        config = engine.vllm_config.additional_config["systemone_config"]
+        config["diagnostics"] = True
+        config["shared_prefix"]["enabled"] = strategy != "direct"
+        engine.vllm_config.scheduler_config.max_num_batched_tokens = 4096
+        engine.vllm_config.scheduler_config.max_num_seqs = 20
+        request = _request(serving)
+        if single_question:
+            request.questions.pop("second")
+            engine.branch_count = 1
+        service = serving.SystemOneService(engine)
+        response = await asyncio.wait_for(service.evaluate(request, _raw_request()), timeout=2)
+        # Cross the same JSON boundary as the HTTP endpoint before exercising
+        # the actual experiment validator, rather than constructing diagnostics.
+        record = {"request_id": "request-id", "response": json.loads(json.dumps(response, allow_nan=False))}
+        driver.validate_response(record, request.model_dump(exclude_none=True), strategy)
+        diagnostics = record["response"]["diagnostics"]
+        runtime = diagnostics["runtime"]
+        shared = runtime["shared_prefix"]
+        configured_strategy = shared["strategy"] if shared["enabled"] else "direct"
+        assert configured_strategy == diagnostics["configured_strategy"] == strategy
+        assert diagnostics["strategy"] == ("direct" if single_question else strategy)
+        assert runtime["cache"]["block_size"] == engine.vllm_config.cache_config.block_size
+        assert runtime["scheduler"]["max_num_batched_tokens"] == 4096
+        assert runtime["scheduler"]["max_num_seqs"] == 20
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        asyncio.run(run(executor))
