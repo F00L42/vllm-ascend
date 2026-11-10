@@ -1,0 +1,26 @@
+资料依据与结论范围（2026-11-10）
+
+1. DG 共存
+vllm-ascend/docs/report/1009/jev_like_engineering_progress.md，第 2.4、2.6、3 节记录 Qwen-27B 同实例、同权重提供 Decision 与 Generation 的服务器验证反馈。图描述答案 token 路线，不代表 Kev Pointer Head 的 pooling runner 与生成共存。功能共存不等于所有混合负载性能已完成验收。
+
+2. 对齐官方实现
+C:/Users/F-O-O/Projects/vllm，分支 codex/v0.30.0-qwen-decisions，检查时 HEAD 0e01034。官方 v0.32 的 Qwen Decisions API 回移到 v0.30 底座，复用原生 generate(max_tokens=1, logprob_token_ids=...)、并发聚合及生命周期。不是把全部 v0.32 模型、引擎或依赖迁入 v0.30。
+来源：docs/serving/online_serving/qwen_decisions_backport_ascend.md:3-8、44-55。
+
+3. 最大选项数从 26 扩展到 128
+已落地本地提交 74488d3。固定使用 A-Z 加 102 个大写双字母的单 token 标签。每题仍只提交一个分支请求；1-26 项保留原标签和 prompt；返回的概率键仍是业务选项。
+源码：vllm/entrypoints/generate/structured_decisions/question_types.py:27、250；strategies.py:295。
+本地记录：docs/design/decisions_030_extensions.md:58-63 记载 153 项合同回归，以及 24 上下文乘 128 标签共 3072 组真实 tokenizer 校验通过。这些是 10/29 的已有记录，本次制稿没有重跑推理测试。
+NPU 验收：用户在本次对话于 2026-11-10 明确补充“128 选项已完成 NPU 验收”。页面据此更新状态。此反馈不自动覆盖预热性能、持续 DG 混合负载或所有业务质量指标。
+26 是官方 Qwen Decisions 的基础标签容量，不是旧 Plumb 的 16 项或 Kev Pointer 路线的 255 项。
+
+4. 优化进展
+官方 PR #61192 的共享前缀预热机制已补迁，来自 v0.32 tag 之后的 main。可选开关默认关闭。满足多题、hybrid、APC、完整 prompt 公共前缀至少 128 tokens 等条件时，先完成一个内部 producer，再并发各题。
+源码及说明：strategies.py:328；docs/serving/online_serving/qwen_decisions_backport_ascend.md:59-77。
+实际缓存命中长度与性能仍需测量，未把公开 AMD 数据用作 Ascend 收益。
+
+固定来源链接
+https://github.com/F00L42/vllm/tree/codex/v0.30.0-qwen-decisions
+https://github.com/vllm-project/vllm/blob/5df63a7203cdb9328d824a27b682e77c7b9928be/vllm/entrypoints/generate/structured_decisions/strategies.py
+https://github.com/vllm-project/vllm/pull/61192
+https://github.com/F00L42/vllm-ascend/commit/ecd7d1263f6f2ca33d8a92abdecf2c76e9b12006
